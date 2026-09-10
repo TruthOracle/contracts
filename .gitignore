@@ -1,0 +1,12 @@
+# Secrets — the Keycloak client secret and the ZKPC (MainNet) credentials live here.
+.env
+.env.*
+!.env.example
+
+# Daml build output and SDK logs (rebuild with `npm run dars:build`)
+daml/.daml/
+daml/log/
+*.log
+
+node_modules/
+.DS_Store

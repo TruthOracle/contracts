@@ -1,0 +1,33 @@
+{
+  "name": "@truthoracle/contracts",
+  "version": "2.0.0",
+  "private": true,
+  "description": "TruthOracle Daml contracts for the Canton Network plus the operator scripts that build/upload DARs, bootstrap the MarketCounter, query the ledger, grant party rights and create Enterprise Wallet accounts",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dars:build": "cd daml && dpm build",
+    "dars:test": "cd daml && dpm test",
+    "dars:upload": "tsx scripts/upload-dar.ts",
+    "create:contract": "tsx scripts/create-contract.ts",
+    "create:account": "tsx scripts/create-account.ts",
+    "ledger:query": "tsx scripts/ledger-query.ts",
+    "contracts:active": "tsx scripts/active-contracts.ts",
+    "rights:grant": "tsx scripts/grant-rights.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "fmt": "prettier --write \"scripts/**/*.ts\"",
+    "fmt:check": "prettier --check \"scripts/**/*.ts\""
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3"
+  }
+}
