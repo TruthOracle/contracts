@@ -56,7 +56,7 @@ dpm build
 
 Or from the repo root: `npm run dars:build`.
 
-Output: `.daml/dist/truthoracle-v12-1.0.0.dar`.
+Output: `.daml/dist/truthoracle-v14-1.0.0.dar`.
 
 **Note on `daml` vs `dpm`**  
 The legacy `daml` CLI (from `get.daml.com`) reads the same `daml.yaml` and produces the same DAR, so `daml build` still works if you have it installed. `dpm` is the supported path for SDK 3.4.x.

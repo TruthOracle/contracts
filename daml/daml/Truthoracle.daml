@@ -117,9 +117,7 @@ template UserWallet
     balanceCC : Decimal     -- spendable in-app balance
     depositedCC : Decimal   -- lifetime external deposits (reconciliation)
     withdrawnCC : Decimal   -- lifetime external withdrawals (reconciliation)
-    -- txRefs already credited, newest first. Optional and LAST so 2.0.0 passes the
-    -- smart-contract-upgrade check against 1.0.0 contracts, which read as None.
-    depositRefs : Optional [Text]
+    depositRefs : [Text]    -- txRefs already credited, newest first; Deposit refuses a repeat
   where
     signatory admin
     observer owner
@@ -136,12 +134,11 @@ template UserWallet
       controller admin
       do
         assertMsg "deposit must be positive" (amountCC > 0.0)
-        let credited = fromOptional [] depositRefs
-        assertMsg "txRef was already credited" (notElem txRef credited)
+        assertMsg "txRef was already credited" (notElem txRef depositRefs)
         create this with
           balanceCC = balanceCC + amountCC
           depositedCC = depositedCC + amountCC
-          depositRefs = Some (txRef :: credited)
+          depositRefs = txRef :: depositRefs
 
     -- Internal credit (trade proceeds, redemptions, payout settlement).
     choice Credit : ContractId UserWallet

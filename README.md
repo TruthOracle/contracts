@@ -8,7 +8,7 @@ contracts, the backend (`../truthoracle-backend`) and the treasury wallet
 ```
 truthoracle-contracts/
 ├── daml/
-│   ├── daml.yaml                 # package name/version — breaking changes bump the NAME (v13 → v14)
+│   ├── daml.yaml                 # package name/version (truthoracle-v14 1.0.0) — breaking changes bump the NAME
 │   ├── daml/Truthoracle.daml     # markets, pm-AMM trades, UserWallet, PendingPayout, resolution tiers
 │   ├── daml/PmAmmMath.daml       # pricing math (mirrored by the frontend's lib/marketPricing.ts)
 │   ├── daml/Incentives.daml      # rewards
@@ -46,11 +46,19 @@ Every script takes the acting party from `VITE_ENTERPRISE_WALLET_PARTY_ID`; `con
 and `rights:grant` accept `--party` to override. `--network zkpc` (MainNet) reads the
 `ZKPC_*` block only and never falls back to the DevNet values.
 
-## Upgrading the package
+## Package versioning
 
-Canton 3.x smart-contract upgrades reject schema-incompatible DARs uploaded under an
-existing package *name*. Additive changes (new `Optional` field appended last) keep the
-name and bump `version`; breaking changes bump the name (`truthoracle-v13` → `-v14`).
+The deployed package is **`truthoracle-v14` 1.0.0**. Canton's smart-contract-upgrade (SCU)
+check rejects schema-incompatible DARs uploaded under an existing package *name*: additive
+changes (a new `Optional` field appended last) keep the name and bump `version`; breaking
+changes bump the name (`truthoracle-v13` → `truthoracle-v14`).
+
+**Why v14.** v14 is the greenfield accounts era. The on-ledger `UserWallet` is created only
+by the backend treasury for an account's primary wallet, and `UserWallet.depositRefs` is a
+mandatory `[Text]` (v13 2.0.0 had appended it as an `Optional` purely to pass the SCU check).
+There is no upgrade path from v13; the v13 contracts on DevNet are abandoned test data
+(DevNet only, no user funds).
+
 After upload, point the frontend (`VITE_TRUTHORACLE_PACKAGE_ID` / `_NAME`) and the backend
 (`TRUTHORACLE_PACKAGE_ID` / `_NAME`) at the new package. Details: `daml/DEPLOYMENT.md`.
 

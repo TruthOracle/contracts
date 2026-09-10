@@ -2,13 +2,14 @@
 # Prediction market platform for Canton Network testnet
 
 sdk-version: "3.4.10"
-# Breaking protocol rewrites get a new package *name* (truthoracle -> v5 -> v10 -> v11 -> v12 -> v13):
-# Canton 3.x smart-contract-upgrade checks reject schema-incompatible DARs uploaded
-# under an existing package name.
-# v13: in-app UserWallet - trades debit/credit an on-ledger balance in one transaction.
-# v13 2.0.0: UserWallet.depositRefs (Optional, appended - SCU-compatible) records credited txRefs on-ledger.
-name: truthoracle-v13
-version: 2.0.0
+# Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v13 -> v14):
+# Canton's smart-contract-upgrade (SCU) check rejects a schema-incompatible DAR
+# uploaded under an existing package name, so a new schema needs a new name.
+# v14: greenfield accounts era - no upgrade path from v13. UserWallet is created only
+# by the backend treasury for an account's primary wallet, and UserWallet.depositRefs
+# (credited txRefs, newest first) is a mandatory [Text].
+name: truthoracle-v14
+version: 1.0.0
 source: daml
 dependencies:
   - daml-prim

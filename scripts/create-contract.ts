@@ -235,6 +235,8 @@ async function createUserWallet(owner: string, initialCC: number, txRef: string)
             balanceCC: amount,
             depositedCC: amount,
             withdrawnCC: "0.0000000000",
+            // v14: mandatory list of credited txRefs (newest first); Deposit refuses a repeat.
+            depositRefs: txRef ? [txRef] : [],
           },
         },
       },

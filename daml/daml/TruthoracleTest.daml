@@ -53,7 +53,7 @@ mkWallet admin owner amount = do
       balanceCC = 0.0
       depositedCC = 0.0
       withdrawnCC = 0.0
-      depositRefs = None
+      depositRefs = []
   if amount > 0.0
     then submit admin do
       exerciseCmd wCid Deposit with amountCC = amount, txRef = "0xdeposit"
@@ -146,7 +146,7 @@ inAppWalletLifecycle = do
       w.balanceCC === 50.0
       w.depositedCC === 50.0
       w.withdrawnCC === 0.0
-      w.depositRefs === Some ["0xdeposit"]
+      w.depositRefs === ["0xdeposit"]
 
   -- Crediting the same external transfer twice is rejected on-ledger; a fresh
   -- txRef appends to the record. Exercised on bob's wallet so alice's flow below
@@ -162,7 +162,7 @@ inAppWalletLifecycle = do
     Some w -> do
       w.balanceCC === 15.0
       w.depositedCC === 15.0
-      w.depositRefs === Some ["0xdeposit2", "0xdeposit"]
+      w.depositRefs === ["0xdeposit2", "0xdeposit"]
 
   -- Neither the owner nor the admin can debit unilaterally.
   submitMustFail alice do

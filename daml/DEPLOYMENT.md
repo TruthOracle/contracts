@@ -2,6 +2,12 @@
 
 Step-by-step guide to build the DAR and deploy it on Canton (local node or Canton Network).
 
+**Current package: `truthoracle-v14` 1.0.0.** Breaking changes bump the package *name*
+because Canton's smart-contract-upgrade check rejects a schema-incompatible DAR uploaded
+under an existing name. v14 is the greenfield accounts era (`UserWallet` created only by the
+backend treasury, `UserWallet.depositRefs` a mandatory `[Text]`); there is no upgrade path
+from v13, and the v13 contracts on DevNet are abandoned test data (DevNet only, no user funds).
+
 ---
 
 ## Quick: build & upload to a remote participant (npm scripts)
@@ -24,7 +30,7 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
    npm run dars:build
    ```
 
-   Produces `daml/.daml/dist/truthoracle-1.0.0.dar`.
+   Produces `daml/.daml/dist/truthoracle-v14-1.0.0.dar`.
 
 3. Upload it:
 
@@ -38,17 +44,17 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
 
    ```
    # With the Daml SDK on PATH (recommended):
-   daml damlc inspect-dar daml/.daml/dist/truthoracle-1.0.0.dar --json | jq -r .main_package_id
+   daml damlc inspect-dar daml/.daml/dist/truthoracle-v14-1.0.0.dar --json | jq -r .main_package_id
 
    # Or read the manifest directly (no SDK required — MANIFEST.MF wraps at 72 chars
    # with leading-space continuation, so strip whitespace before parsing):
-   unzip -p daml/.daml/dist/truthoracle-1.0.0.dar META-INF/MANIFEST.MF \
+   unzip -p daml/.daml/dist/truthoracle-v14-1.0.0.dar META-INF/MANIFEST.MF \
      | tr -d '\r\n ' \
      | grep -oE 'Main-Dalf:[^/]+' \
      | sed -E 's/.*-([0-9a-f]{64})$/\1/'
    ```
 
-   Both print the 64-hex package ID (e.g. `193d7a7edc7229ab83e61452889dbfb066fa6fd497f1e847d3cb6bef7a27df34`). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
+   Both print the 64-hex package ID (e.g. `64653d3a4b63abcff3a0f016cdf08b0c46aa827f0b971b8990a7fdf5ede6446a`). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
 
    To confirm the participant has it, `curl -H "Authorization: Bearer $TOKEN" "$LEDGER_API/v2/packages"` returns `{"packageIds":[…]}` — the new ID will be in that list (the endpoint doesn't label them, so cross-reference by the ID you extracted above).
 
@@ -62,7 +68,7 @@ From the `daml/` directory after building:
 
 ```bash
 cd daml
-dpm sandbox --dar .daml/dist/truthoracle-1.0.0.dar
+dpm sandbox --dar .daml/dist/truthoracle-v14-1.0.0.dar
 ```
 
 Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your DAR will be uploaded automatically.
@@ -80,7 +86,7 @@ Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your
    ```
 3. In the console, upload the DAR (use the full path to your DAR):
    ```bash
-   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-frontend-and-contracts/daml/.daml/dist/truthoracle-1.0.0.dar")
+   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-contracts/daml/.daml/dist/truthoracle-v14-1.0.0.dar")
    ```
 4. Optional: list DARs and allocate parties:
    ```bash
@@ -113,8 +119,8 @@ dpm build
 
 This produces a DAR under `.daml/dist/`:
 
-- **Path**: `daml/.daml/dist/truthoracle-1.0.0.dar`
-- **Name**: `truthoracle` (from `daml.yaml`)
+- **Path**: `daml/.daml/dist/truthoracle-v14-1.0.0.dar`
+- **Name**: `truthoracle-v14`, version `1.0.0` (from `daml.yaml`)
 
 Optional: run tests before deploying:
 
@@ -201,13 +207,13 @@ You need to upload **one DAR** (TruthOracle is a single project). If you later a
 3. Upload the DAR (adjust path to your built DAR):
 
    ```bash
-   participant1.dars.upload("/full/path/to/truthoracle-frontend-and-contracts/daml/.daml/dist/truthoracle-1.0.0.dar")
+   participant1.dars.upload("/full/path/to/truthoracle-contracts/daml/.daml/dist/truthoracle-v14-1.0.0.dar")
    ```
 
    Or copy the DAR into the Canton bundle and use a relative path, e.g.:
 
    ```bash
-   participant1.dars.upload("dars/truthoracle-1.0.0.dar")
+   participant1.dars.upload("dars/truthoracle-v14-1.0.0.dar")
    ```
 
 4. Note the returned **hash**; the DAR is uploaded and (by default) **vetted**, so contracts from this package can be used immediately.
@@ -248,9 +254,9 @@ You can also upload the DAR using the Ledger API **PackageService** (e.g. from a
 
 | Step | Action |
 |------|--------|
-| 1 | `cd daml && dpm build` → get `daml/.daml/dist/truthoracle-1.0.0.dar` |
+| 1 | `cd daml && dpm build` → get `daml/.daml/dist/truthoracle-v14-1.0.0.dar` |
 | 2 | Start Canton participant (local or TestNet) and connect to a sync domain |
-| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-1.0.0.dar")` |
+| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v14-1.0.0.dar")` |
 | 4 | Allocate parties; point app and frontend to participant Ledger API |
 | 5 | Test with console and/or UI |
 
