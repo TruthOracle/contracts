@@ -8,8 +8,11 @@ sdk-version: "3.4.10"
 # v14: greenfield accounts era - no upgrade path from v13. UserWallet is created only
 # by the backend treasury for an account's primary wallet, and UserWallet.depositRefs
 # (credited txRefs, newest first) is a mandatory [Text].
+# 1.1.0 (additive, same name): PredictionMarket and MarketCounter.CreateMarket gain the
+# catalog identity fields ticker / eventTicker / yesSubTitle / noSubTitle, appended as
+# Optional Text so the SCU check accepts the upgrade and 1.0.0 contracts read as None.
 name: truthoracle-v14
-version: 1.0.0
+version: 1.1.0
 source: daml
 dependencies:
   - daml-prim

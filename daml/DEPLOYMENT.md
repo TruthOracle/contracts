@@ -282,3 +282,28 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 - [Sync.global – Validator onboarding](https://docs.sync.global/validator_operator/validator_onboarding.html)
 - [Canton Nodes (hosted API)](https://www.cantonnodes.com/)
 - [DAML SDK installation](https://docs.daml.com/getting-started/installation.html)
+
+---
+
+## Upgrading to truthoracle-v14 1.1.0 (catalog identity)
+
+1.1.0 is an additive upgrade of the 1.0.0 package (same name; four `Optional Text` fields
+appended to `PredictionMarket` and to `MarketCounter.CreateMarket`): Canton's SCU check
+accepts it and every 1.0.0 contract keeps working — the new fields read as `None`.
+
+1. `npm run dars:build` → `daml/.daml/dist/truthoracle-v14-1.1.0.dar` (needs an x86_64-capable
+   `damlc`; see the README note).
+2. `npm run dars:test` — the suite includes `catalogIdentityOnMarkets`.
+3. `npm run dars:upload -- daml/.daml/dist/truthoracle-v14-1.1.0.dar [-- --network devnet]`
+   and read the package id from the DAR's MANIFEST (above).
+4. Backend: set `TRUTHORACLE_PACKAGE_ID=<1.1.0 id>` (the name stays `truthoracle-v14`) and
+   restart. `POST /admin/markets` then submits `CreateMarket` with `ticker` / `eventTicker` /
+   the sub titles; the indexer already understands both shapes.
+5. Frontend: set `VITE_TRUTHORACLE_PACKAGE_ID=<1.1.0 id>` so the admin console's own
+   `CreateMarket` carries the fields, and redeploy.
+6. Existing markets keep the indexer's synthetic `MKT-<marketId>` ticker until an operator
+   assigns their event / ticker / labels through `PATCH /admin/markets/:id/catalog`
+   (`truthoracle-backend/docs/MARKETS.md` §2).
+
+No data migration and no `MarketCounter` re-creation: the counter created under 1.0.0 is
+exercised by 1.1.0 commands as-is.

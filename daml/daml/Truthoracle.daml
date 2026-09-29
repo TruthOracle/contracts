@@ -415,6 +415,14 @@ template PredictionMarket
     proposal : Optional ProposalInfo
     policy : ResolutionPolicy
     auditObservers : [Party]
+    -- Catalog identity (truthoracle-v14 1.1.0, appended as Optional for the SCU check):
+    -- the Kalshi-style market ticker, the event this market is one leg of, and the labels
+    -- of the two sides a trader signs for. None on contracts created by 1.0.0 clients; the
+    -- backend catalog fills those blanks off-ledger (truthoracle-backend docs/MARKETS.md).
+    ticker : Optional Text
+    eventTicker : Optional Text
+    yesSubTitle : Optional Text
+    noSubTitle : Optional Text
   where
     signatory admin
     observer auditObservers, policy.reporters
@@ -1118,6 +1126,11 @@ template MarketCounter
         prizeFeeShareBps : Int
         policy : ResolutionPolicy
         auditObservers : [Party]
+        -- 1.1.0: catalog identity, all optional (a 1.0.0 client omits them)
+        ticker : Optional Text
+        eventTicker : Optional Text
+        yesSubTitle : Optional Text
+        noSubTitle : Optional Text
       controller admin
       do
         assertMsg "probability must be within [0.01, 0.99]"
@@ -1156,6 +1169,7 @@ template MarketCounter
           resolvedAt = None
           proposal = None
           policy, auditObservers
+          ticker, eventTicker, yesSubTitle, noSubTitle
         lpCid <- create LiquidityPosition with
           provider = admin, admin, marketId, auditObservers
           lpTokens = l0

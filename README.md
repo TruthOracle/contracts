@@ -48,10 +48,28 @@ and `rights:grant` accept `--party` to override. `--network zkpc` (MainNet) read
 
 ## Package versioning
 
-The deployed package is **`truthoracle-v14` 1.0.0**. Canton's smart-contract-upgrade (SCU)
+The source is **`truthoracle-v14` 1.1.0**; the package deployed on DevNet / MainNet is 1.0.0 until the
+1.1.0 DAR is uploaded (see below). Canton's smart-contract-upgrade (SCU)
 check rejects schema-incompatible DARs uploaded under an existing package *name*: additive
 changes (a new `Optional` field appended last) keep the name and bump `version`; breaking
 changes bump the name (`truthoracle-v13` → `truthoracle-v14`).
+
+**1.1.0 — catalog identity (additive).** `PredictionMarket` and `MarketCounter.CreateMarket`
+gain four `Optional Text` fields appended last: `ticker` (the Kalshi-style market ticker),
+`eventTicker` (the event this market is one leg of — one event, many binary markets),
+`yesSubTitle` and `noSubTitle` (the labels of the two sides). They are inert for trading and
+resolution; the backend indexer reads them to build the series → event → market catalog
+(`truthoracle-backend/docs/MARKETS.md`) and fills the blanks of 1.0.0 contracts (which read
+as `None`) from its operator-managed catalog. A 1.0.0 client may keep submitting `CreateMarket`
+without them. Upload the DAR under the same name (`npm run dars:upload`), then point the
+backend (`TRUTHORACLE_PACKAGE_ID`) and the frontend (`VITE_TRUTHORACLE_PACKAGE_ID`) at the
+1.1.0 package id so their commands carry the new fields; the package-*name* filters and the
+indexer are unaffected. Steps: `daml/DEPLOYMENT.md` "Upgrading to truthoracle-v14 1.1.0".
+
+> Building needs a `damlc` that runs on this machine: the `dpm` 3.4.10 components are x86_64
+> binaries, so on an Apple-silicon Mac without Rosetta `dpm build` fails with "bad CPU type in
+> executable" (`softwareupdate --install-rosetta`, or build in CI / on x86_64).
+
 
 **Why v14.** v14 is the greenfield accounts era. The on-ledger `UserWallet` is created only
 by the backend treasury for an account's primary wallet, and `UserWallet.depositRefs` is a
