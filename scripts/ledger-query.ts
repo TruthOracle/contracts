@@ -91,21 +91,23 @@ async function getKeycloakAccessToken(opts: {
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log([
-      "List active TruthOracle contracts visible to the Enterprise Wallet admin party.",
-      "",
-      "Usage:",
-      "  npm run ledger:query                  # all TruthOracle templates (MarketCounter, PredictionMarket, …)",
-      "  npm run ledger:query MarketCounter    # only this template",
-      "  npm run ledger:query -- --network zkpc  # against the zkpc (MainNet) node",
-      "  npm run ledger:query --raw            # full JSON dump (no summary)",
-      "",
-      "Config: root `.env` — one credential set per network, never mixed:",
-      "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
-      "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
-      "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
-      "  Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
-    ].join("\n"));
+    console.log(
+      [
+        "List active TruthOracle contracts visible to the Enterprise Wallet admin party.",
+        "",
+        "Usage:",
+        "  npm run ledger:query                  # all TruthOracle templates (MarketCounter, PredictionMarket, …)",
+        "  npm run ledger:query MarketCounter    # only this template",
+        "  npm run ledger:query -- --network zkpc  # against the zkpc (MainNet) node",
+        "  npm run ledger:query --raw            # full JSON dump (no summary)",
+        "",
+        "Config: root `.env` — one credential set per network, never mixed:",
+        "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
+        "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
+        "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
+        "  Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -180,7 +182,9 @@ async function main() {
     return;
   }
 
-  const items: any[] = Array.isArray(active) ? (active as any[]) : ((active as any).activeContracts ?? (active as any).contracts ?? []);
+  const items: any[] = Array.isArray(active)
+    ? (active as any[])
+    : ((active as any).activeContracts ?? (active as any).contracts ?? []);
   console.log(`Network: ${network}`);
   console.log(`Admin party: ${ADMIN_PARTY}`);
   console.log(`Ledger offset: ${activeAtOffset}`);
