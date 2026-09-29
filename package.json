@@ -13,6 +13,7 @@
     "dars:test": "cd daml && dpm build --all && cd test && dpm test",
     "dars:upload": "tsx scripts/upload-dar.ts",
     "create:contract": "tsx scripts/create-contract.ts",
+    "create:market": "tsx scripts/create-market.ts",
     "create:account": "tsx scripts/create-account.ts",
     "ledger:query": "tsx scripts/ledger-query.ts",
     "contracts:active": "tsx scripts/active-contracts.ts",
