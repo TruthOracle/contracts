@@ -241,7 +241,7 @@ async function main() {
   const LEDGER_API = net.ledgerApi;
   const PARTY = partyOverride || adminParty();
   // The active-contracts template filter takes a package-*name* reference
-  // ("#truthoracle-v15:Module:Entity"), never a package id.
+  // ("#truthoracle-v16:Module:Entity"), never a package id.
   const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || "truthoracle";
 
   const onlyEntity = positional[0];
