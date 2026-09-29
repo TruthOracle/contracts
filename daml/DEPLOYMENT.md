@@ -2,11 +2,13 @@
 
 Step-by-step guide to build the DAR and deploy it on Canton (local node or Canton Network).
 
-**Current package: `truthoracle-v14` 1.0.0.** Breaking changes bump the package *name*
+**Current package: `truthoracle-v15` 1.0.0.** Breaking changes bump the package *name*
 because Canton's smart-contract-upgrade check rejects a schema-incompatible DAR uploaded
-under an existing name. v14 is the greenfield accounts era (`UserWallet` created only by the
-backend treasury, `UserWallet.depositRefs` a mandatory `[Text]`); there is no upgrade path
-from v13, and the v13 contracts on DevNet are abandoned test data (DevNet only, no user funds).
+under an existing name. v15 makes the catalog identity (`ticker`, `eventTicker`,
+`yesSubTitle`, `noSubTitle`) a mandatory part of every market and keeps the v14 accounts-era
+rules (`UserWallet` created only by the backend treasury, `UserWallet.depositRefs` a
+mandatory `[Text]`). It is deployed from scratch: no upgrade path from v14, whose contracts
+on DevNet / MainNet are abandoned like v13's before them (see the last section).
 
 ---
 
@@ -30,7 +32,7 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
    npm run dars:build
    ```
 
-   Produces `daml/.daml/dist/truthoracle-v14-1.0.0.dar`.
+   Produces `daml/.daml/dist/truthoracle-v15-1.0.0.dar`.
 
 3. Upload it:
 
@@ -44,17 +46,17 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
 
    ```
    # With the Daml SDK on PATH (recommended):
-   daml damlc inspect-dar daml/.daml/dist/truthoracle-v14-1.0.0.dar --json | jq -r .main_package_id
+   dpm inspect-dar daml/.daml/dist/truthoracle-v15-1.0.0.dar --json | jq -r .main_package_id
 
    # Or read the manifest directly (no SDK required — MANIFEST.MF wraps at 72 chars
    # with leading-space continuation, so strip whitespace before parsing):
-   unzip -p daml/.daml/dist/truthoracle-v14-1.0.0.dar META-INF/MANIFEST.MF \
+   unzip -p daml/.daml/dist/truthoracle-v15-1.0.0.dar META-INF/MANIFEST.MF \
      | tr -d '\r\n ' \
      | grep -oE 'Main-Dalf:[^/]+' \
      | sed -E 's/.*-([0-9a-f]{64})$/\1/'
    ```
 
-   Both print the 64-hex package ID (e.g. `64653d3a4b63abcff3a0f016cdf08b0c46aa827f0b971b8990a7fdf5ede6446a`). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
+   Both print the 64-hex package ID (`59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d` for v15 1.0.0 built with SDK 3.5.12). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
 
    To confirm the participant has it, `curl -H "Authorization: Bearer $TOKEN" "$LEDGER_API/v2/packages"` returns `{"packageIds":[…]}` — the new ID will be in that list (the endpoint doesn't label them, so cross-reference by the ID you extracted above).
 
@@ -68,7 +70,7 @@ From the `daml/` directory after building:
 
 ```bash
 cd daml
-dpm sandbox --dar .daml/dist/truthoracle-v14-1.0.0.dar
+dpm sandbox --dar .daml/dist/truthoracle-v15-1.0.0.dar
 ```
 
 Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your DAR will be uploaded automatically.
@@ -120,8 +122,8 @@ dpm build --all
 This produces the templates DAR under `.daml/dist/` (and the test package's DAR under
 `test/.daml/dist/`, which is never uploaded):
 
-- **Path**: `daml/.daml/dist/truthoracle-v14-1.1.0.dar`
-- **Name**: `truthoracle-v14`, version `1.1.0` (from `daml.yaml`)
+- **Path**: `daml/.daml/dist/truthoracle-v15-1.0.0.dar`
+- **Name**: `truthoracle-v15`, version `1.0.0` (from `daml.yaml`)
 
 Run the Daml Script suite before deploying:
 
@@ -255,9 +257,9 @@ You can also upload the DAR using the Ledger API **PackageService** (e.g. from a
 
 | Step | Action |
 |------|--------|
-| 1 | `cd daml && dpm build --all` → get `daml/.daml/dist/truthoracle-v14-1.1.0.dar` |
+| 1 | `cd daml && dpm build --all` → get `daml/.daml/dist/truthoracle-v15-1.0.0.dar` |
 | 2 | Start Canton participant (local or TestNet) and connect to a sync domain |
-| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v14-1.1.0.dar")` |
+| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v15-1.0.0.dar")` |
 | 4 | Allocate parties; point app and frontend to participant Ledger API |
 | 5 | Test with console and/or UI |
 
@@ -286,35 +288,31 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 
 ---
 
-## Upgrading to truthoracle-v14 1.1.0 (catalog identity)
+## Deploying truthoracle-v15 1.0.0 (from scratch)
 
-1.1.0 is an additive upgrade of the 1.0.0 package (same name; four `Optional Text` fields
-appended to `PredictionMarket` and to `MarketCounter.CreateMarket`): Canton's SCU check
-accepts it and every 1.0.0 contract keeps working — the new fields read as `None`.
+v15 is a new package lineage, not an upgrade: `PredictionMarket` and `MarketCounter.CreateMarket`
+carry `ticker`, `eventTicker`, `yesSubTitle` and `noSubTitle` as mandatory `Text`, which the SCU
+check would refuse under the v14 name. The v14 contracts on DevNet / MainNet are abandoned (as
+v13's were); nothing is migrated. Every market is created anew with its identity.
 
 1. `npm run dars:build` (SDK 3.5.12; Apple silicon: Rosetta 2 once, see the README note) →
-   `daml/.daml/dist/truthoracle-v14-1.1.0.dar`, package id
-   `ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505`. The DAR carries no daml-script
-   and no test code (the suite is the separate `daml/test` package); the empty
-   `TruthoracleTest` module is what lets the upgrade check pass, since 1.0.0 shipped its
-   suite in that module.
-2. `npm run dars:test` — 15 scenarios including `catalogIdentityOnMarkets` pass.
-3. `cd daml && dpm upgrade-check --both .daml/dist/truthoracle-v14-1.0.0.dar .daml/dist/truthoracle-v14-1.1.0.dar`
-   (the 1.0.0 DAR is the deployed one, built with SDK 3.4.10 — a rebuild of the `main` branch
-   reproduces it) — the participant's upgrade validator must log "claims to upgrade package
-   64653d3a… (truthoracle-v14 v1.0.0)" and "Typechecking upgrades for lineage of package-name
-   truthoracle-v14 succeeded" (verified 2026-09-29, exit 0).
-4. `npm run dars:upload -- daml/.daml/dist/truthoracle-v14-1.1.0.dar [-- --network devnet]`
-   and confirm the package id above in the DAR's MANIFEST.
-5. Backend: set `TRUTHORACLE_PACKAGE_ID=ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505`
-   (the name stays `truthoracle-v14`) and restart. `POST /admin/markets` then submits
-   `CreateMarket` with `ticker` / `eventTicker` / the sub titles; the indexer already
-   understands both shapes.
-6. Frontend: set `VITE_TRUTHORACLE_PACKAGE_ID` to the same id so the admin console's own
-   `CreateMarket` carries the fields, and redeploy.
-7. Existing markets keep the indexer's synthetic `MKT-<marketId>` ticker until an operator
-   assigns their event / ticker / labels through `PATCH /admin/markets/:id/catalog`
-   (`truthoracle-backend/docs/MARKETS.md` §2).
-
-No data migration and no `MarketCounter` re-creation: the counter created under 1.0.0 is
-exercised by 1.1.0 commands as-is.
+   `daml/.daml/dist/truthoracle-v15-1.0.0.dar`, package id
+   `59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d`. The DAR carries no daml-script
+   and no test code (the suite is the separate `daml/test` package).
+2. `npm run dars:test` — 15 scenarios pass, including `catalogIdentityOnMarkets` (two legs of one
+   event, identity survives a trade, blank ticker / event refused).
+3. `npm run dars:upload -- daml/.daml/dist/truthoracle-v15-1.0.0.dar [-- --network devnet]` and
+   confirm the package id above in the DAR's MANIFEST.
+4. In `.env`: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v15`,
+   `VITE_TRUTHORACLE_PACKAGE_ID=59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d`, then
+   `npm run create:contract` to bootstrap the v15 `MarketCounter` as the admin party (the v14
+   counter belongs to the old package and is left alone).
+5. Backend: `TRUTHORACLE_PACKAGE_NAME=truthoracle-v15` and
+   `TRUTHORACLE_PACKAGE_ID=59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d`; start it against a fresh
+   database (or resync the index — the v15 index never contains v14 rows). `POST /admin/markets`
+   requires `ticker` and `eventTicker` and defaults the sub titles to "Yes" / "No".
+6. Frontend: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v15` and `VITE_TRUTHORACLE_PACKAGE_ID`
+   as above, and redeploy; the admin console's `CreateMarket` form requires the ticker and the
+   event ticker.
+7. User wallets: every account's on-ledger `UserWallet` is created by the backend treasury under
+   the new package on first use, exactly as at the v14 cut-over.

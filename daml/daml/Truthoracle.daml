@@ -389,7 +389,11 @@ template PredictionMarket
   with
     admin : Party               -- operator & treasury (Enterprise Wallet party)
     marketId : Int
+    ticker : Text               -- Kalshi-style market ticker (e.g. FED-26MAR-CUT25); unique per market, enforced by the backend catalog
+    eventTicker : Text          -- the event this market is one leg of (one event, many binary markets)
     question : Text
+    yesSubTitle : Text          -- what a trader buys with YES (e.g. "Cut of 25 bps or more")
+    noSubTitle : Text           -- what a trader buys with NO
     imageUrl : Text
     description : Text
     resolutionDescription : Text
@@ -415,20 +419,15 @@ template PredictionMarket
     proposal : Optional ProposalInfo
     policy : ResolutionPolicy
     auditObservers : [Party]
-    -- Catalog identity (truthoracle-v14 1.1.0, appended as Optional for the SCU check):
-    -- the Kalshi-style market ticker, the event this market is one leg of, and the labels
-    -- of the two sides a trader signs for. None on contracts created by 1.0.0 clients; the
-    -- backend catalog fills those blanks off-ledger (truthoracle-backend docs/MARKETS.md).
-    ticker : Optional Text
-    eventTicker : Optional Text
-    yesSubTitle : Optional Text
-    noSubTitle : Optional Text
   where
     signatory admin
     observer auditObservers, policy.reporters
     ensure reserveYes >= 0.0 && reserveNo >= 0.0 && lpTokenSupply >= 0.0
       && currentPrice > 0.0 && currentPrice < 1.0
       && feeBps >= 0 && feeBps <= 1000 && expiresAt > createdAt
+      -- Catalog identity is part of what a trader signs for and is never blank: every
+      -- successor version copies it (truthoracle-backend docs/MARKETS.md).
+      && ticker /= "" && eventTicker /= "" && yesSubTitle /= "" && noSubTitle /= ""
 
     -- -----------------------------------------------------------------
     -- Trading surface
@@ -1110,7 +1109,11 @@ template MarketCounter
     -- (transferred off-ledger), seeding the admin's LiquidityPosition.
     choice CreateMarket : (ContractId MarketCounter, ContractId PredictionMarket, ContractId LiquidityPosition)
       with
+        ticker : Text
+        eventTicker : Text
         question : Text
+        yesSubTitle : Text
+        noSubTitle : Text
         imageUrl : Text
         description : Text
         resolutionDescription : Text
@@ -1126,13 +1129,10 @@ template MarketCounter
         prizeFeeShareBps : Int
         policy : ResolutionPolicy
         auditObservers : [Party]
-        -- 1.1.0: catalog identity, all optional (a 1.0.0 client omits them)
-        ticker : Optional Text
-        eventTicker : Optional Text
-        yesSubTitle : Optional Text
-        noSubTitle : Optional Text
       controller admin
       do
+        assertMsg "ticker, eventTicker, yesSubTitle and noSubTitle must be non-empty"
+          (ticker /= "" && eventTicker /= "" && yesSubTitle /= "" && noSubTitle /= "")
         assertMsg "probability must be within [0.01, 0.99]"
           (initialProbability >= 0.01 && initialProbability <= 0.99)
         assertMsg "initial pool value must be positive" (initialValueCC > 0.0)

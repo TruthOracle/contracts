@@ -5,17 +5,17 @@
 # Cantor8 participants run Canton 3.5.x. Bumping it changes the package id — re-record it in
 # DEPLOYMENT.md. CI (.github/workflows/ci.yml) warns when a newer release exists.
 sdk-version: "3.5.12"
-# Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v13 -> v14):
+# Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v14 -> v15):
 # Canton's smart-contract-upgrade (SCU) check rejects a schema-incompatible DAR
 # uploaded under an existing package name, so a new schema needs a new name.
-# v14: greenfield accounts era - no upgrade path from v13. UserWallet is created only
-# by the backend treasury for an account's primary wallet, and UserWallet.depositRefs
-# (credited txRefs, newest first) is a mandatory [Text].
-# 1.1.0 (additive, same name): PredictionMarket and MarketCounter.CreateMarket gain the
-# catalog identity fields ticker / eventTicker / yesSubTitle / noSubTitle, appended as
-# Optional Text so the SCU check accepts the upgrade and 1.0.0 contracts read as None.
-name: truthoracle-v14
-version: 1.1.0
+# v15: catalog identity is part of the market. PredictionMarket and
+# MarketCounter.CreateMarket carry ticker / eventTicker / yesSubTitle / noSubTitle as
+# mandatory, non-empty Text (v14 had no such fields). Deployed from scratch: no upgrade
+# path from v14, whose contracts are abandoned like v13's. The v14 accounts-era rules
+# stay: UserWallet is created only by the backend treasury and depositRefs is a
+# mandatory [Text].
+name: truthoracle-v15
+version: 1.0.0
 source: daml
 # Templates only. The script suite lives in ./test (its own package, see multi-package.yaml) so the
 # DAR uploaded to the participant carries no daml-script and no test code.

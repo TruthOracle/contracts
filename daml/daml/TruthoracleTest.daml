@@ -1,7 +1,0 @@
--- | Deliberately empty. truthoracle-v14 1.0.0 shipped its Daml Script suite inside this module, and
--- Canton's smart-contract-upgrade check requires every module of the previous version to exist in
--- the upgrading package ("Module TruthoracleTest appears in package that is being upgraded, but does
--- not appear in the upgrading package"). The suite now lives in ../test as module Test.Truthoracle,
--- so the DAR uploaded to a participant carries neither daml-script nor test code. Drop this file at
--- the next package-name bump (v15), which starts a fresh lineage.
-module TruthoracleTest where

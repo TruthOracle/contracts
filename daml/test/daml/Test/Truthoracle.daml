@@ -88,10 +88,10 @@ mkMarket admin counterCid policy isDynamic p0 v0 =
       prizeFeeShareBps = 2000
       policy
       auditObservers = []
-      ticker = Some "EPL-26MAY13-LIV"
-      eventTicker = Some "EPL-26MAY13"
-      yesSubTitle = Some "Liverpool win"
-      noSubTitle = Some "Draw or Brighton"
+      ticker = "EPL-26MAY13-LIV"
+      eventTicker = "EPL-26MAY13"
+      yesSubTitle = "Liverpool win"
+      noSubTitle = "Draw or Brighton"
 
 fetchMarket : Party -> ContractId PredictionMarket -> Script PredictionMarket
 fetchMarket p cid = do
@@ -422,11 +422,10 @@ liquidityPeriodGatesTrading = do
       prizeFeeShareBps = 0
       policy = defaultPolicy
       auditObservers = []
-      -- a 1.0.0-style caller: no catalog identity
-      ticker = None
-      eventTicker = None
-      yesSubTitle = None
-      noSubTitle = None
+      ticker = "EPL-26MAY13-PERIOD"
+      eventTicker = "EPL-26MAY13"
+      yesSubTitle = "Yes"
+      noSubTitle = "No"
 
   let duringPeriod = t0 + 100
   -- Buys are blocked during the collection window...
@@ -895,9 +894,9 @@ forecastCommitAndScoring = do
   assert (not (any (\(_, p) -> p.reason == "model-prize" && p.user == bob) bobPrizes))
 
 -- ---------------------------------------------------------------------------
--- Catalog identity (1.1.0): two legs of one event carry distinct tickers and the
--- shared eventTicker; a 1.0.0-style CreateMarket leaves them None. The fields are
--- inert for trading and resolution - every choice carries them along unchanged.
+-- Catalog identity: two legs of one event carry distinct tickers and the shared
+-- eventTicker; every field is mandatory and non-empty. The fields are inert for
+-- trading and resolution - every choice carries them along unchanged.
 -- ---------------------------------------------------------------------------
 
 catalogIdentityOnMarkets : Script ()
@@ -925,18 +924,19 @@ catalogIdentityOnMarkets = do
       prizeFeeShareBps = 0
       policy = defaultPolicy
       auditObservers = []
-      ticker = Some "EPL-26MAY13-HOLD"
-      eventTicker = Some "EPL-26MAY13"
-      yesSubTitle = None
-      noSubTitle = None
+      ticker = "EPL-26MAY13-HOLD"
+      eventTicker = "EPL-26MAY13"
+      yesSubTitle = "Hold"
+      noSubTitle = "Cut or hike"
   m1 <- fetchMarket admin cut25Cid
   m2 <- fetchMarket admin holdCid
-  m1.ticker === Some "EPL-26MAY13-LIV"
-  m2.ticker === Some "EPL-26MAY13-HOLD"
-  m1.eventTicker === Some "EPL-26MAY13"
+  m1.ticker === "EPL-26MAY13-LIV"
+  m2.ticker === "EPL-26MAY13-HOLD"
+  m1.eventTicker === "EPL-26MAY13"
   m2.eventTicker === m1.eventTicker
-  m1.yesSubTitle === Some "Liverpool win"
-  m2.yesSubTitle === None
+  m1.yesSubTitle === "Liverpool win"
+  m2.yesSubTitle === "Hold"
+  m2.noSubTitle === "Cut or hike"
   assert (m1.marketId /= m2.marketId)
   -- The identity survives a trade (the successor version is a copy of `this`).
   (cut25Cid, _, _) <- submit (actAs alice <> readAs admin) do
@@ -949,32 +949,31 @@ catalogIdentityOnMarkets = do
       existingPosition = None
       walletCid = aliceW
   m1' <- fetchMarket admin cut25Cid
-  m1'.ticker === Some "EPL-26MAY13-LIV"
-  m1'.eventTicker === Some "EPL-26MAY13"
-  m1'.noSubTitle === Some "Draw or Brighton"
-  -- A 1.0.0-style caller (no identity) is still accepted.
-  (_, legacyCid, _) <- submit admin do
-    exerciseCmd counterCid CreateMarket with
-      question = "Legacy market?"
-      imageUrl = ""
-      description = ""
-      resolutionDescription = "operator"
-      category = "Other"
-      createdAt = t0
-      expiresAt = tExpiry
-      gracePeriodSecs = grace
-      isDynamic = False
-      liquidityPeriodSecs = 0
-      initialProbability = 0.5
-      initialValueCC = 50.0
-      feeBps = 30
-      prizeFeeShareBps = 0
-      policy = defaultPolicy
-      auditObservers = []
-      ticker = None
-      eventTicker = None
-      yesSubTitle = None
-      noSubTitle = None
-  legacy <- fetchMarket admin legacyCid
-  legacy.ticker === None
-  legacy.eventTicker === None
+  m1'.ticker === "EPL-26MAY13-LIV"
+  m1'.eventTicker === "EPL-26MAY13"
+  m1'.noSubTitle === "Draw or Brighton"
+  -- Blank identity is refused: a market without a ticker or an event cannot exist.
+  let blank = \t e -> submitMustFail admin do
+        exerciseCmd counterCid CreateMarket with
+          question = "Blank identity?"
+          imageUrl = ""
+          description = ""
+          resolutionDescription = "operator"
+          category = "Other"
+          createdAt = t0
+          expiresAt = tExpiry
+          gracePeriodSecs = grace
+          isDynamic = False
+          liquidityPeriodSecs = 0
+          initialProbability = 0.5
+          initialValueCC = 50.0
+          feeBps = 30
+          prizeFeeShareBps = 0
+          policy = defaultPolicy
+          auditObservers = []
+          ticker = t
+          eventTicker = e
+          yesSubTitle = "Yes"
+          noSubTitle = "No"
+  blank "" "EPL-26MAY13"
+  blank "EPL-26MAY13-BLANK" ""

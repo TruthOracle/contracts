@@ -8,14 +8,13 @@ contracts, the backend (`../truthoracle-backend`) and the treasury wallet
 ```
 truthoracle-contracts/
 ├── daml/
-│   ├── daml.yaml                 # templates package truthoracle-v14 1.1.0 — breaking changes bump the NAME
+│   ├── daml.yaml                 # templates package truthoracle-v15 1.0.0 — breaking changes bump the NAME
 │   ├── multi-package.yaml        # `dpm build --all` builds the templates package, then the test package
 │   ├── daml/Truthoracle.daml     # markets, pm-AMM trades, UserWallet, PendingPayout, resolution tiers
 │   ├── daml/PmAmmMath.daml       # pricing math (mirrored by the frontend's lib/marketPricing.ts)
 │   ├── daml/Incentives.daml      # rewards
 │   ├── daml/Marketplace.daml     # prediction models
-│   ├── daml/TruthoracleTest.daml # empty placeholder: 1.0.0 shipped the suite here and SCU forbids dropping a module
-│   ├── test/daml.yaml            # test package truthoracle-v14-test (daml-script stays out of the uploaded DAR)
+│   ├── test/daml.yaml            # test package truthoracle-v15-test (daml-script stays out of the uploaded DAR)
 │   ├── test/daml/Test/Truthoracle.daml  # the Daml Script suite (`npm run dars:test`)
 │   ├── README.md / DEPLOYMENT.md # module docs and the deployment runbook
 │   └── *.dar                     # previously uploaded packages (history)
@@ -53,23 +52,22 @@ and `rights:grant` accept `--party` to override. `--network zkpc` (MainNet) read
 
 ## Package versioning
 
-The source is **`truthoracle-v14` 1.1.0**; the package deployed on DevNet / MainNet is 1.0.0 until the
-1.1.0 DAR is uploaded (see below). Canton's smart-contract-upgrade (SCU)
-check rejects schema-incompatible DARs uploaded under an existing package *name*: additive
-changes (a new `Optional` field appended last) keep the name and bump `version`; breaking
-changes bump the name (`truthoracle-v13` → `truthoracle-v14`).
+The source is **`truthoracle-v15` 1.0.0**, a fresh lineage deployed from scratch; the v14 package
+still on DevNet / MainNet is abandoned (as v13 was) and is not upgraded. Canton's
+smart-contract-upgrade (SCU) check rejects schema-incompatible DARs uploaded under an existing
+package *name*: additive changes (a new `Optional` field appended last) keep the name and bump
+`version`; anything else bumps the name (`truthoracle-v14` → `truthoracle-v15`).
 
-**1.1.0 — catalog identity (additive).** `PredictionMarket` and `MarketCounter.CreateMarket`
-gain four `Optional Text` fields appended last: `ticker` (the Kalshi-style market ticker),
-`eventTicker` (the event this market is one leg of — one event, many binary markets),
-`yesSubTitle` and `noSubTitle` (the labels of the two sides). They are inert for trading and
-resolution; the backend indexer reads them to build the series → event → market catalog
-(`truthoracle-backend/docs/MARKETS.md`) and fills the blanks of 1.0.0 contracts (which read
-as `None`) from its operator-managed catalog. A 1.0.0 client may keep submitting `CreateMarket`
-without them. Upload the DAR under the same name (`npm run dars:upload`), then point the
-backend (`TRUTHORACLE_PACKAGE_ID`) and the frontend (`VITE_TRUTHORACLE_PACKAGE_ID`) at the
-1.1.0 package id so their commands carry the new fields; the package-*name* filters and the
-indexer are unaffected. Steps: `daml/DEPLOYMENT.md` "Upgrading to truthoracle-v14 1.1.0".
+**Why v15 — catalog identity is part of the market.** `PredictionMarket` and
+`MarketCounter.CreateMarket` carry `ticker` (the Kalshi-style market ticker), `eventTicker` (the
+event this market is one leg of — one event, many binary markets), `yesSubTitle` and
+`noSubTitle` (what a trader buys with each side) as mandatory, non-empty `Text` (`ensure` and an
+`assertMsg` in `CreateMarket` refuse blanks). A trader therefore signs for a named market and
+event, the backend indexer reads the identity straight off the ledger with no synthetic
+fallback, and the operator catalog (`truthoracle-backend/docs/MARKETS.md`) only adds the
+series → event grouping around it. Ticker uniqueness is enforced by the backend catalog, not on
+the ledger (Daml 3 has no contract keys). Deploy steps: `daml/DEPLOYMENT.md` "Deploying
+truthoracle-v15 1.0.0".
 
 ### Toolchain
 
@@ -82,20 +80,17 @@ it into `~/.dpm` (put `~/.dpm/bin` on PATH). Bumping the SDK changes the package
 Daml change — the id hashes the compiled package together with its stdlib dependencies — so
 re-record it below and in `daml/DEPLOYMENT.md`.
 
-The Daml Script suite is its own package (`daml/test`, name `truthoracle-v14-test`, module
+The Daml Script suite is its own package (`daml/test`, name `truthoracle-v15-test`, module
 `Test.Truthoracle`), as the 3.5 compiler recommends: the DAR that is uploaded carries neither
-daml-script nor test code, and a test-only change no longer changes the production package id.
-`daml/daml/TruthoracleTest.daml` is an empty placeholder because 1.0.0 shipped the suite in that
-module and the SCU check refuses an upgrade that drops a module; it goes away at the next
-package-name bump.
+daml-script nor test code, and a test-only change never changes the production package id.
 
 > macOS note: `dpm` ships `damlc` as an Intel (x86_64) binary only (still true for 3.5.12), so an
 > Apple-silicon Mac needs Rosetta 2 once (`softwareupdate --install-rosetta --agree-to-license`);
 > without it `dpm build` fails with "bad CPU type in executable".
 
-1.1.0 was built, tested (15/15) and upgrade-checked against the deployed 1.0.0 with this toolchain
-on 2026-09-29 — package id `ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505` (a content hash:
-the same source and SDK reproduce it).
+`truthoracle-v15` 1.0.0 was built and tested (15/15) with this toolchain on 2026-09-29 — package
+id `59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d` (a content hash: the same source and
+SDK reproduce it, on macOS and on the Ubuntu CI runner alike).
 
 
 **Why v14.** v14 is the greenfield accounts era. The on-ledger `UserWallet` is created only

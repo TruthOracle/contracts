@@ -56,8 +56,8 @@ dpm build --all
 
 Or from the repo root: `npm run dars:build`.
 
-Output: `.daml/dist/truthoracle-v14-1.1.0.dar` (the templates package — the one that gets uploaded)
-and `test/.daml/dist/truthoracle-v14-test-1.1.0.dar` (the Daml Script suite, never uploaded).
+Output: `.daml/dist/truthoracle-v15-1.0.0.dar` (the templates package — the one that gets uploaded)
+and `test/.daml/dist/truthoracle-v15-test-1.0.0.dar` (the Daml Script suite, never uploaded).
 `multi-package.yaml` makes `--all` build them in dependency order.
 
 **Note on `daml` vs `dpm`**  
@@ -70,8 +70,7 @@ cd daml
 dpm build --all && (cd test && dpm test)
 ```
 
-Or from the repo root: `npm run dars:test`. The suite lives in `test/daml/Test/Truthoracle.daml`;
-`daml/TruthoracleTest.daml` is an empty placeholder kept for the 1.0.0 → 1.1.0 upgrade check.
+Or from the repo root: `npm run dars:test`. The suite lives in `test/daml/Test/Truthoracle.daml`.
 
 ## Deploy to Canton Network
 
