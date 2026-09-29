@@ -394,10 +394,9 @@ template PredictionMarket
     question : Text
     yesSubTitle : Text          -- what a trader buys with YES (e.g. "Cut of 25 bps or more")
     noSubTitle : Text           -- what a trader buys with NO
-    imageUrl : Text
-    description : Text
-    resolutionDescription : Text
-    category : Text
+    resolutionDescription : Text -- the terms a resolution is judged against; signed with every trade
+    -- Presentation (image, description, category) lives off-ledger in the backend catalog: no choice
+    -- reads it, no trader signs for it, and it must stay editable (truthoracle-backend docs/MARKETS.md).
     createdAt : Int             -- epoch seconds
     expiresAt : Int             -- trading stops; resolution window opens
     gracePeriodSecs : Int       -- resolution must complete before expiresAt + grace
@@ -1114,10 +1113,7 @@ template MarketCounter
         question : Text
         yesSubTitle : Text
         noSubTitle : Text
-        imageUrl : Text
-        description : Text
         resolutionDescription : Text
-        category : Text
         createdAt : Int
         expiresAt : Int
         gracePeriodSecs : Int
@@ -1153,8 +1149,8 @@ template MarketCounter
 
         newCounterCid <- create this with value = newValue
         marketCid <- create PredictionMarket with
-          admin, marketId, question, imageUrl, description, resolutionDescription
-          category, createdAt, expiresAt, gracePeriodSecs, isDynamic, liquidityPeriodSecs
+          admin, marketId, question, resolutionDescription
+          createdAt, expiresAt, gracePeriodSecs, isDynamic, liquidityPeriodSecs
           reserveYes = x0
           reserveNo = y0
           liquidityL = l0

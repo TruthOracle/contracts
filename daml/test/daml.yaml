@@ -1,8 +1,8 @@
-# Daml Script suite for truthoracle-v15. Separate package so daml-script and the tests never
+# Daml Script suite for truthoracle-v16. Separate package so daml-script and the tests never
 # end up in the DAR that is uploaded to a participant. Version tracks the package under test;
 # the data-dependency path must point at the DAR ../daml.yaml produces.
 sdk-version: "3.5.12"
-name: truthoracle-v15-test
+name: truthoracle-v16-test
 version: 1.0.0
 source: daml
 dependencies:
@@ -10,4 +10,4 @@ dependencies:
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../.daml/dist/truthoracle-v15-1.0.0.dar
+  - ../.daml/dist/truthoracle-v16-1.0.0.dar

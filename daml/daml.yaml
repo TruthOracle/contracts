@@ -8,13 +8,14 @@ sdk-version: "3.5.12"
 # Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v14 -> v15):
 # Canton's smart-contract-upgrade (SCU) check rejects a schema-incompatible DAR
 # uploaded under an existing package name, so a new schema needs a new name.
-# v15: catalog identity is part of the market. PredictionMarket and
-# MarketCounter.CreateMarket carry ticker / eventTicker / yesSubTitle / noSubTitle as
-# mandatory, non-empty Text (v14 had no such fields). Deployed from scratch: no upgrade
-# path from v14, whose contracts are abandoned like v13's. The v14 accounts-era rules
-# stay: UserWallet is created only by the backend treasury and depositRefs is a
-# mandatory [Text].
-name: truthoracle-v15
+# v16: presentation leaves the contract. PredictionMarket and MarketCounter.CreateMarket
+# no longer carry imageUrl / description / category — no choice reads them, no trader
+# signs for them, and they must stay editable — so the backend catalog owns them
+# (truthoracle-backend docs/MARKETS.md "What lives where"). Kept from v15: the catalog
+# identity ticker / eventTicker / yesSubTitle / noSubTitle as mandatory, non-empty Text,
+# and the v14 accounts-era rules (UserWallet created only by the backend treasury,
+# depositRefs a mandatory [Text]). Deployed from scratch: no upgrade path from v15.
+name: truthoracle-v16
 version: 1.0.0
 source: daml
 # Templates only. The script suite lives in ./test (its own package, see multi-package.yaml) so the

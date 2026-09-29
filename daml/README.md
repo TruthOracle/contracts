@@ -56,8 +56,8 @@ dpm build --all
 
 Or from the repo root: `npm run dars:build`.
 
-Output: `.daml/dist/truthoracle-v15-1.0.0.dar` (the templates package — the one that gets uploaded)
-and `test/.daml/dist/truthoracle-v15-test-1.0.0.dar` (the Daml Script suite, never uploaded).
+Output: `.daml/dist/truthoracle-v16-1.0.0.dar` (the templates package — the one that gets uploaded)
+and `test/.daml/dist/truthoracle-v16-test-1.0.0.dar` (the Daml Script suite, never uploaded).
 `multi-package.yaml` makes `--all` build them in dependency order.
 
 **Note on `daml` vs `dpm`**  

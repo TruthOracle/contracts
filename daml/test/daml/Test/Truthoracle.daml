@@ -73,10 +73,7 @@ mkMarket admin counterCid policy isDynamic p0 v0 =
   submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Will Liverpool beat Brighton on 13 May 2026?"
-      imageUrl = "https://example.com/market.png"
-      description = "pm-AMM lifecycle test market"
       resolutionDescription = "Opta full-time scoreline"
-      category = "Sports"
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
@@ -407,10 +404,7 @@ liquidityPeriodGatesTrading = do
   (_, marketCid, _) <- submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Liquidity-period market?"
-      imageUrl = ""
-      description = "dynamic pool with a pre-trading collection window"
       resolutionDescription = "operator"
-      category = "Sports"
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
@@ -909,10 +903,7 @@ catalogIdentityOnMarkets = do
   (counterCid, holdCid, _) <- submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Will the Fed hold in March 2026?"
-      imageUrl = ""
-      description = "second leg of the same event"
       resolutionDescription = "FOMC statement"
-      category = "Economics"
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
@@ -956,10 +947,7 @@ catalogIdentityOnMarkets = do
   let blank = \t e -> submitMustFail admin do
         exerciseCmd counterCid CreateMarket with
           question = "Blank identity?"
-          imageUrl = ""
-          description = ""
           resolutionDescription = "operator"
-          category = "Other"
           createdAt = t0
           expiresAt = tExpiry
           gracePeriodSecs = grace

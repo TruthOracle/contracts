@@ -8,13 +8,13 @@ contracts, the backend (`../truthoracle-backend`) and the treasury wallet
 ```
 truthoracle-contracts/
 ├── daml/
-│   ├── daml.yaml                 # templates package truthoracle-v15 1.0.0 — breaking changes bump the NAME
+│   ├── daml.yaml                 # templates package truthoracle-v16 1.0.0 — breaking changes bump the NAME
 │   ├── multi-package.yaml        # `dpm build --all` builds the templates package, then the test package
 │   ├── daml/Truthoracle.daml     # markets, pm-AMM trades, UserWallet, PendingPayout, resolution tiers
 │   ├── daml/PmAmmMath.daml       # pricing math (mirrored by the frontend's lib/marketPricing.ts)
 │   ├── daml/Incentives.daml      # rewards
 │   ├── daml/Marketplace.daml     # prediction models
-│   ├── test/daml.yaml            # test package truthoracle-v15-test (daml-script stays out of the uploaded DAR)
+│   ├── test/daml.yaml            # test package truthoracle-v16-test (daml-script stays out of the uploaded DAR)
 │   ├── test/daml/Test/Truthoracle.daml  # the Daml Script suite (`npm run dars:test`)
 │   ├── README.md / DEPLOYMENT.md # module docs and the deployment runbook
 │   └── *.dar                     # previously uploaded packages (history)
@@ -52,13 +52,22 @@ and `rights:grant` accept `--party` to override. `--network zkpc` (MainNet) read
 
 ## Package versioning
 
-The source is **`truthoracle-v15` 1.0.0**, a fresh lineage deployed from scratch; the v14 package
-still on DevNet / MainNet is abandoned (as v13 was) and is not upgraded. Canton's
+The source is **`truthoracle-v16` 1.0.0**, a fresh lineage deployed from scratch; the v14 and
+v15 packages still on DevNet are abandoned (as v13 was) and are not upgraded. Canton's
 smart-contract-upgrade (SCU) check rejects schema-incompatible DARs uploaded under an existing
 package *name*: additive changes (a new `Optional` field appended last) keep the name and bump
-`version`; anything else bumps the name (`truthoracle-v14` → `truthoracle-v15`).
+`version`; anything else bumps the name (`truthoracle-v14` → `truthoracle-v16`).
 
-**Why v15 — catalog identity is part of the market.** `PredictionMarket` and
+**Why v16 — presentation leaves the contract.** `imageUrl`, `description` and `category` are gone
+from `PredictionMarket` and `CreateMarket`. Rule: on-ledger only what a trader signs for, what a
+choice reads, or what a resolution needs. Artwork, blurbs and categorisation are none of those,
+were frozen for the life of a market (no choice edited them) and were copied into every trade
+transaction. The backend catalog owns them now (`truthoracle-backend/docs/MARKETS.md` "What lives
+where"): an operator sets them at creation or later through `PATCH /admin/markets/:market/metadata`,
+category comes from the series, a blank image falls back to the event's. `resolutionDescription`
+stays: it is the terms a resolution is judged against, signed with every trade.
+
+**Why v15 (kept in v16) — catalog identity is part of the market.** `PredictionMarket` and
 `MarketCounter.CreateMarket` carry `ticker` (the Kalshi-style market ticker), `eventTicker` (the
 event this market is one leg of — one event, many binary markets), `yesSubTitle` and
 `noSubTitle` (what a trader buys with each side) as mandatory, non-empty `Text` (`ensure` and an
@@ -67,7 +76,7 @@ event, the backend indexer reads the identity straight off the ledger with no sy
 fallback, and the operator catalog (`truthoracle-backend/docs/MARKETS.md`) only adds the
 series → event grouping around it. Ticker uniqueness is enforced by the backend catalog, not on
 the ledger (Daml 3 has no contract keys). Deploy steps: `daml/DEPLOYMENT.md` "Deploying
-truthoracle-v15 1.0.0".
+truthoracle-v16 1.0.0".
 
 ### Toolchain
 
@@ -80,7 +89,7 @@ it into `~/.dpm` (put `~/.dpm/bin` on PATH). Bumping the SDK changes the package
 Daml change — the id hashes the compiled package together with its stdlib dependencies — so
 re-record it below and in `daml/DEPLOYMENT.md`.
 
-The Daml Script suite is its own package (`daml/test`, name `truthoracle-v15-test`, module
+The Daml Script suite is its own package (`daml/test`, name `truthoracle-v16-test`, module
 `Test.Truthoracle`), as the 3.5 compiler recommends: the DAR that is uploaded carries neither
 daml-script nor test code, and a test-only change never changes the production package id.
 
@@ -88,8 +97,8 @@ daml-script nor test code, and a test-only change never changes the production p
 > Apple-silicon Mac needs Rosetta 2 once (`softwareupdate --install-rosetta --agree-to-license`);
 > without it `dpm build` fails with "bad CPU type in executable".
 
-`truthoracle-v15` 1.0.0 was built and tested (15/15) with this toolchain on 2026-09-29 — package
-id `59a785f1aa72f96da4a8569964eeca2efd333a53957075714ff0f57acc37499d` (a content hash: the same source and
+`truthoracle-v16` 1.0.0 was built and tested (15/15) with this toolchain on 2026-09-29 — package
+id `95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1` (a content hash: the same source and
 SDK reproduce it, on macOS and on the Ubuntu CI runner alike).
 
 
