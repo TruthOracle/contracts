@@ -44,28 +44,33 @@ use **Canton Coin** (native on testnet and mainnet); no custom token.
 
 ## Prerequisites
 
-- **DPM** (Digital Asset Package Manager) with SDK 3.4.10 — see [DPM install](https://docs.digitalasset.com/build/3.4/dpm/manual-install.html)
+- **dpm** (Digital Asset Package Manager) with the SDK pinned in `daml.yaml` — 3.5.12, the latest stable release; keep it current (repo README, "Toolchain"). See [dpm installation](https://docs.canton.network/sdks-tools/cli-tools/dpm#installation). `dpm test` and `dpm upgrade-check` need a JDK (17 works locally, CI uses 21).
 - Canton Network testnet access
 
 ## Build
 
 ```bash
 cd daml
-dpm build
+dpm build --all
 ```
 
 Or from the repo root: `npm run dars:build`.
 
-Output: `.daml/dist/truthoracle-v14-1.0.0.dar`.
+Output: `.daml/dist/truthoracle-v16-1.0.0.dar` (the templates package — the one that gets uploaded)
+and `test/.daml/dist/truthoracle-v16-test-1.0.0.dar` (the Daml Script suite, never uploaded).
+`multi-package.yaml` makes `--all` build them in dependency order.
 
 **Note on `daml` vs `dpm`**  
-The legacy `daml` CLI (from `get.daml.com`) reads the same `daml.yaml` and produces the same DAR, so `daml build` still works if you have it installed. `dpm` is the supported path for SDK 3.4.x.
+The legacy `daml` assistant was removed with SDK 3.5; `dpm` is the only supported CLI.
 
 ## Test
 
 ```bash
-dpm test
+cd daml
+dpm build --all && (cd test && dpm test)
 ```
+
+Or from the repo root: `npm run dars:test`. The suite lives in `test/daml/Test/Truthoracle.daml`.
 
 ## Deploy to Canton Network
 

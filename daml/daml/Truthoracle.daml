@@ -389,11 +389,14 @@ template PredictionMarket
   with
     admin : Party               -- operator & treasury (Enterprise Wallet party)
     marketId : Int
+    ticker : Text               -- Kalshi-style market ticker (e.g. FED-26MAR-CUT25); unique per market, enforced by the backend catalog
+    eventTicker : Text          -- the event this market is one leg of (one event, many binary markets)
     question : Text
-    imageUrl : Text
-    description : Text
-    resolutionDescription : Text
-    category : Text
+    yesSubTitle : Text          -- what a trader buys with YES (e.g. "Cut of 25 bps or more")
+    noSubTitle : Text           -- what a trader buys with NO
+    resolutionDescription : Text -- the terms a resolution is judged against; signed with every trade
+    -- Presentation (image, description, category) lives off-ledger in the backend catalog: no choice
+    -- reads it, no trader signs for it, and it must stay editable (truthoracle-backend docs/MARKETS.md).
     createdAt : Int             -- epoch seconds
     expiresAt : Int             -- trading stops; resolution window opens
     gracePeriodSecs : Int       -- resolution must complete before expiresAt + grace
@@ -421,6 +424,9 @@ template PredictionMarket
     ensure reserveYes >= 0.0 && reserveNo >= 0.0 && lpTokenSupply >= 0.0
       && currentPrice > 0.0 && currentPrice < 1.0
       && feeBps >= 0 && feeBps <= 1000 && expiresAt > createdAt
+      -- Catalog identity is part of what a trader signs for and is never blank: every
+      -- successor version copies it (truthoracle-backend docs/MARKETS.md).
+      && ticker /= "" && eventTicker /= "" && yesSubTitle /= "" && noSubTitle /= ""
 
     -- -----------------------------------------------------------------
     -- Trading surface
@@ -1102,11 +1108,12 @@ template MarketCounter
     -- (transferred off-ledger), seeding the admin's LiquidityPosition.
     choice CreateMarket : (ContractId MarketCounter, ContractId PredictionMarket, ContractId LiquidityPosition)
       with
+        ticker : Text
+        eventTicker : Text
         question : Text
-        imageUrl : Text
-        description : Text
+        yesSubTitle : Text
+        noSubTitle : Text
         resolutionDescription : Text
-        category : Text
         createdAt : Int
         expiresAt : Int
         gracePeriodSecs : Int
@@ -1120,6 +1127,8 @@ template MarketCounter
         auditObservers : [Party]
       controller admin
       do
+        assertMsg "ticker, eventTicker, yesSubTitle and noSubTitle must be non-empty"
+          (ticker /= "" && eventTicker /= "" && yesSubTitle /= "" && noSubTitle /= "")
         assertMsg "probability must be within [0.01, 0.99]"
           (initialProbability >= 0.01 && initialProbability <= 0.99)
         assertMsg "initial pool value must be positive" (initialValueCC > 0.0)
@@ -1140,8 +1149,8 @@ template MarketCounter
 
         newCounterCid <- create this with value = newValue
         marketCid <- create PredictionMarket with
-          admin, marketId, question, imageUrl, description, resolutionDescription
-          category, createdAt, expiresAt, gracePeriodSecs, isDynamic, liquidityPeriodSecs
+          admin, marketId, question, resolutionDescription
+          createdAt, expiresAt, gracePeriodSecs, isDynamic, liquidityPeriodSecs
           reserveYes = x0
           reserveNo = y0
           liquidityL = l0
@@ -1156,6 +1165,7 @@ template MarketCounter
           resolvedAt = None
           proposal = None
           policy, auditObservers
+          ticker, eventTicker, yesSubTitle, noSubTitle
         lpCid <- create LiquidityPosition with
           provider = admin, admin, marketId, auditObservers
           lpTokens = l0

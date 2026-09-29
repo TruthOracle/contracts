@@ -200,25 +200,27 @@ function describe(row: Row): string {
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log([
-      "Dump active TruthOracle contracts from the Canton JSON Ledger API.",
-      "",
-      "Usage:",
-      "  npm run contracts:active                       # every template, grouped summary",
-      "  npm run contracts:active MarketCounter         # a single template",
-      "  npm run contracts:active -- --network zkpc     # against the zkpc (MainNet) node",
-      "  npm run contracts:active -- --party <partyId>  # query as another party",
-      "  npm run contracts:active -- --json             # machine-readable JSON",
-      "  npm run contracts:active -- --raw              # verbatim API responses",
-      "",
-      `Known templates: ${TEMPLATES.map((t) => t.entity).join(", ")}`,
-      "",
-      "Config (root `.env`) — one credential set per network, never mixed:",
-      "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
-      "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
-      "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
-      "  VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
-    ].join("\n"));
+    console.log(
+      [
+        "Dump active TruthOracle contracts from the Canton JSON Ledger API.",
+        "",
+        "Usage:",
+        "  npm run contracts:active                       # every template, grouped summary",
+        "  npm run contracts:active MarketCounter         # a single template",
+        "  npm run contracts:active -- --network zkpc     # against the zkpc (MainNet) node",
+        "  npm run contracts:active -- --party <partyId>  # query as another party",
+        "  npm run contracts:active -- --json             # machine-readable JSON",
+        "  npm run contracts:active -- --raw              # verbatim API responses",
+        "",
+        `Known templates: ${TEMPLATES.map((t) => t.entity).join(", ")}`,
+        "",
+        "Config (root `.env`) — one credential set per network, never mixed:",
+        "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
+        "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
+        "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
+        "  VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -241,13 +243,11 @@ async function main() {
   const LEDGER_API = net.ledgerApi;
   const PARTY = partyOverride || adminParty();
   // The active-contracts template filter takes a package-*name* reference
-  // ("#truthoracle-v14:Module:Entity"), never a package id.
+  // ("#truthoracle-v16:Module:Entity"), never a package id.
   const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || "truthoracle";
 
   const onlyEntity = positional[0];
-  const targets = onlyEntity
-    ? TEMPLATES.filter((t) => t.entity.toLowerCase() === onlyEntity.toLowerCase())
-    : TEMPLATES;
+  const targets = onlyEntity ? TEMPLATES.filter((t) => t.entity.toLowerCase() === onlyEntity.toLowerCase()) : TEMPLATES;
   if (onlyEntity && targets.length === 0) {
     throw new Error(`Unknown template "${onlyEntity}". Known: ${TEMPLATES.map((t) => t.entity).join(", ")}`);
   }
@@ -316,7 +316,20 @@ async function main() {
     return;
   }
   if (asJson) {
-    console.log(JSON.stringify({ participant: LEDGER_API, packageName: PACKAGE_NAME, party: PARTY, offset: activeAtOffset, missing, contracts: all }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          participant: LEDGER_API,
+          packageName: PACKAGE_NAME,
+          party: PARTY,
+          offset: activeAtOffset,
+          missing,
+          contracts: all,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 

@@ -121,23 +121,25 @@ function hasRight(rights: Right[], kind: "CanReadAs" | "CanActAs", party: string
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log([
-      "Grant CanReadAs/CanActAs rights for a party to a ledger user (JSON Ledger API).",
-      "",
-      "Usage:",
-      "  npm run rights:grant                        # VITE_ENTERPRISE_WALLET_PARTY_ID → own user",
-      "  npm run rights:grant -- --network zkpc      # against the zkpc (MainNet) node",
-      "  npm run rights:grant -- --party <partyId>   # grant for a specific party",
-      "  npm run rights:grant -- --user <userId>     # grant to a specific ledger user",
-      "  npm run rights:grant -- --read-only         # grant only CanReadAs",
-      "",
-      "Requires the authenticated user to hold ParticipantAdmin. Idempotent.",
-      "",
-      "Config (root `.env`) — one credential set per network, never mixed:",
-      "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
-      "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
-      "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
-    ].join("\n"));
+    console.log(
+      [
+        "Grant CanReadAs/CanActAs rights for a party to a ledger user (JSON Ledger API).",
+        "",
+        "Usage:",
+        "  npm run rights:grant                        # VITE_ENTERPRISE_WALLET_PARTY_ID → own user",
+        "  npm run rights:grant -- --network zkpc      # against the zkpc (MainNet) node",
+        "  npm run rights:grant -- --party <partyId>   # grant for a specific party",
+        "  npm run rights:grant -- --user <userId>     # grant to a specific ledger user",
+        "  npm run rights:grant -- --read-only         # grant only CanReadAs",
+        "",
+        "Requires the authenticated user to hold ParticipantAdmin. Idempotent.",
+        "",
+        "Config (root `.env`) — one credential set per network, never mixed:",
+        "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
+        "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
+        "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -211,9 +213,7 @@ async function main() {
       eventFormat: {
         filtersByParty: {
           [PARTY]: {
-            cumulative: [
-              { identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } },
-            ],
+            cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }],
           },
         },
         verbose: false,
