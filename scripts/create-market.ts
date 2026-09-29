@@ -57,6 +57,19 @@ function mustArg(name: string): string {
 
 const TICKER = /^[A-Z0-9][A-Z0-9._-]{1,63}$/;
 
+/**
+ * Epoch seconds of an ISO-8601 instant, read as UTC. The ledger speaks epoch seconds and the
+ * platform has no other zone, so a timestamp without an offset ("2026-12-16T19:00") means UTC,
+ * never the operator's local time (which is what Date.parse would assume).
+ */
+function parseUtcSeconds(value: string): number {
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
+  const ms = Date.parse(hasZone ? value.trim() : `${value.trim()}Z`);
+  if (!Number.isFinite(ms))
+    throw new Error(`--expires must be an ISO-8601 timestamp (UTC unless it carries an offset): ${value}`);
+  return Math.floor(ms / 1000);
+}
+
 async function keycloakToken(): Promise<string> {
   const url = stripTrailingSlash(mustEnv(viteEnv("KEYCLOAK_URL") || viteEnv("VITE_KEYCLOAK_URL"), "KEYCLOAK_URL"));
   const realm = viteEnv("KEYCLOAK_REALM") || viteEnv("VITE_KEYCLOAK_REALM") || "master";
@@ -145,8 +158,7 @@ async function main() {
   const yesSubTitle = arg("yes") || "Yes";
   const noSubTitle = arg("no") || "No";
   const rules = arg("rules") || "Resolved by the operator from the sources named in the catalog.";
-  const expiresAt = Math.floor(Date.parse(mustArg("expires")) / 1000);
-  if (!Number.isFinite(expiresAt)) throw new Error("--expires must be an ISO-8601 timestamp");
+  const expiresAt = parseUtcSeconds(mustArg("expires"));
   const now = Math.floor(Date.now() / 1000);
   if (expiresAt <= now) throw new Error("--expires must be in the future");
   const p0 = Number(arg("p0") ?? "0.5");

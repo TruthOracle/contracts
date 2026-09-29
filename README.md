@@ -40,7 +40,7 @@ truthoracle-contracts/
 | `npm run dars:test` | builds both packages, then `dpm test` in `daml/test` (15 Daml Script scenarios) |
 | `npm run dars:upload [-- <path.dar>] [-- --network devnet]` | Upload + vet a DAR (zkpc/MainNet by default; prints the package id to put in `VITE_TRUTHORACLE_PACKAGE_ID`) |
 | `npm run create:contract` | Bootstrap the `MarketCounter` as the admin party via the Enterprise Wallet |
-| `npm run create:market -- --ticker … --event … --question … --expires …` | Treasury-signed `CreateMarket` on the ledger (ledger-first: the backend indexer creates placeholder series / event rows; the operator console is the primary path) |
+| `npm run create:market -- --ticker … --event … --question … --expires <UTC ISO>` | Treasury-signed `CreateMarket` on the ledger (ledger-first: the backend indexer creates placeholder series / event rows; the operator console is the primary path) |
 | `npm run create:account` | Create the admin/treasury party on the Enterprise Wallet (`WALLET_VALIDATOR_*`) |
 | `npm run ledger:query [-- --network zkpc]` | Ad-hoc JSON Ledger API reads (ledger end, packages, parties) |
 | `npm run contracts:active [-- --party <partyId>]` | Active contracts of the TruthOracle templates visible to a party |
@@ -78,6 +78,8 @@ fallback, and the operator catalog (`truthoracle-backend/docs/MARKETS.md`) only 
 series → event grouping around it. Ticker uniqueness is enforced by the backend catalog, not on
 the ledger (Daml 3 has no contract keys). Deploy steps: `daml/DEPLOYMENT.md` "Deploying
 truthoracle-v16 1.0.0".
+
+All times on the ledger are UTC: choices take epoch seconds (`createdAt`, `expiresAt`, `nowSeconds`), and the scripts read a timestamp without an offset as UTC.
 
 ### Toolchain
 
