@@ -1,0 +1,174 @@
+# Builds, tests and upgrade-checks the Daml packages on every push to a pull request and on
+# main, so a red check means the branch would not build, fails a scenario, or produces a DAR
+# a participant would refuse as an upgrade of what the base branch builds.
+#
+# The Daml SDK version is whatever daml/daml.yaml pins. Policy: keep it on the latest stable
+# release (the Cantor8 participants run Canton 3.5.x); the advisory job below warns when a
+# newer release exists.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch supersedes the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TERM: xterm # the dpm installer calls tput, which needs a terminal type
+
+jobs:
+  daml:
+    name: daml build, test, upgrade check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          path: head
+
+      - name: Checkout the PR base (upgrade-check baseline)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Read the SDK versions from daml.yaml
+        id: sdk
+        shell: bash
+        run: |
+          read_sdk() { sed -n 's/^sdk-version:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}.*/\1/p' "$1"; }
+          head="$(read_sdk head/daml/daml.yaml)"
+          [ -n "$head" ] || { echo "::error::no sdk-version in daml/daml.yaml"; exit 1; }
+          base=""
+          [ -f base/daml/daml.yaml ] && base="$(read_sdk base/daml/daml.yaml)"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "SDK: head=$head base=${base:-n/a}"
+
+      - name: JDK 21 (Canton 3.5 tooling — Daml Script runner and upgrade check are JVM)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dpm and SDK ${{ steps.sdk.outputs.head }}
+        shell: bash
+        run: |
+          # Official installer (https://docs.canton.network/sdks-tools/cli-tools/dpm#installation);
+          # ~1 GB tarball per run, which is cheaper than caching ~/.dpm (2+ GB per SDK).
+          curl -sSL https://get.digitalasset.com/install/install.sh | sh -s "${{ steps.sdk.outputs.head }}"
+          echo "$HOME/.dpm/bin" >> "$GITHUB_PATH"
+          "$HOME/.dpm/bin/dpm" --version
+          "$HOME/.dpm/bin/dpm" version
+
+      - name: Build (templates package, then the test package)
+        working-directory: head/daml
+        run: dpm build --all
+
+      - name: Test (Daml Script suite)
+        working-directory: head/daml/test
+        run: dpm test
+
+      - name: Build the base branch DAR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        working-directory: base/daml
+        run: |
+          if [ -n "${{ steps.sdk.outputs.base }}" ] && [ "${{ steps.sdk.outputs.base }}" != "${{ steps.sdk.outputs.head }}" ]; then
+            dpm install "${{ steps.sdk.outputs.base }}"
+          fi
+          dpm build
+
+      - name: Upgrade check against the base branch
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          field() { sed -n "s/^$2:[[:space:]]*\"\{0,1\}\([^\"[:space:]]*\)\"\{0,1\}.*/\1/p" "$1"; }
+          dar_of() { echo "$1/.daml/dist/$(field "$1/daml.yaml" name)-$(field "$1/daml.yaml" version).dar"; }
+          meta() { dpm inspect-dar "$1" --json | jq -r '.packages[.main_package_id] as $m | "\(.main_package_id) \($m.name) \($m.version)"'; }
+          head_dar="$(dar_of head/daml)"; base_dar="$(dar_of base/daml)"
+          read -r hid hname hver <<<"$(meta "$head_dar")"
+          read -r bid bname bver <<<"$(meta "$base_dar")"
+          echo "base: $bname $bver $bid"
+          echo "head: $hname $hver $hid"
+          if [ "$hname" != "$bname" ]; then
+            echo "::notice::package name changed ($bname -> $hname): new lineage, nothing to upgrade-check (breaking changes bump the name, see README)"
+          elif [ "$hver" = "$bver" ]; then
+            if [ "$hid" = "$bid" ]; then
+              echo "templates DAR unchanged (same package id)"
+            else
+              echo "::error::$hname $hver on the base branch has package id $bid but this branch builds $hid. A participant refuses a second package with the same name and version: bump version in daml/daml.yaml and the data-dependency in daml/test/daml.yaml."
+              exit 1
+            fi
+          else
+            dpm upgrade-check --both "$base_dar" "$head_dar"
+          fi
+
+      - name: Summary (package id to put in TRUTHORACLE_PACKAGE_ID / VITE_TRUTHORACLE_PACKAGE_ID)
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          field() { sed -n "s/^$2:[[:space:]]*\"\{0,1\}\([^\"[:space:]]*\)\"\{0,1\}.*/\1/p" "$1"; }
+          name="$(field head/daml/daml.yaml name)"; version="$(field head/daml/daml.yaml version)"
+          dar="head/daml/.daml/dist/$name-$version.dar"
+          id="$(dpm inspect-dar "$dar" --json | jq -r .main_package_id)"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $name $version"
+            echo
+            echo "| | |"
+            echo "|-|-|"
+            echo "| package id | \`$id\` |"
+            echo "| SDK | ${{ steps.sdk.outputs.head }} |"
+            echo "| DAR | \`$(basename "$dar")\` (workflow artifact) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the DAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.name }}-dar
+          path: head/daml/.daml/dist/*.dar
+          if-no-files-found: error
+          retention-days: 30
+
+  scripts:
+    name: operator scripts (typecheck, prettier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run fmt:check
+
+  sdk-freshness:
+    name: newest SDK available (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare daml.yaml with the latest stable release
+        shell: bash
+        run: |
+          pinned="$(sed -n 's/^sdk-version:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}.*/\1/p' daml/daml.yaml)"
+          latest="$(curl -fsS https://get.digitalasset.com/install/latest)"
+          if [ "$pinned" = "$latest" ]; then
+            echo "daml.yaml pins the latest stable SDK ($latest)"
+          else
+            echo "::warning title=Daml SDK behind::daml/daml.yaml pins $pinned; the latest stable release is $latest. Bump it, rebuild, and re-record the package id (daml/DEPLOYMENT.md)."
+          fi

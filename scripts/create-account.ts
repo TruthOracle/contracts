@@ -66,7 +66,10 @@ async function fetchText(url: string, init: RequestInit): Promise<{ status: numb
  */
 async function fetchWalletBearerToken(): Promise<string> {
   const url = stripTrailingSlash(
-    mustEnv(firstEnv("WALLET_KEYCLOAK_URL", "KEYCLOAK_URL", "VITE_KEYCLOAK_URL"), "WALLET_KEYCLOAK_URL or KEYCLOAK_URL"),
+    mustEnv(
+      firstEnv("WALLET_KEYCLOAK_URL", "KEYCLOAK_URL", "VITE_KEYCLOAK_URL"),
+      "WALLET_KEYCLOAK_URL or KEYCLOAK_URL",
+    ),
   );
   const realm = firstEnv("WALLET_KEYCLOAK_REALM", "KEYCLOAK_REALM", "VITE_KEYCLOAK_REALM") || "master";
   // No VITE_ fallback for the credentials — see api/proxy/_keycloakToken.mjs. URL and
@@ -104,29 +107,31 @@ type AccountInfo = {
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log([
-      "Register an account (party) with the Enterprise Wallet via POST /api/v1/accounts.",
-      "",
-      "Usage:",
-      "  npm run create:account                        # name 'truthoracle-admin', slot from WALLET_VALIDATOR_ID",
-      "  npm run create:account -- --name <name>       # custom account name",
-      "  npm run create:account -- --validator-id <n>  # wallet's numeric validator slot (overrides env)",
-      "  npm run create:account -- --coupon <code>     # onboarding coupon (MainNet)",
-      "  npm run create:account -- --no-preapprove     # don't pre-approve amulet transfers",
-      "  npm run create:account -- --list              # list registered accounts and exit",
-      "",
-      "Config (root `.env`):",
-      "  VITE_ENTERPRISE_WALLET_URL — wallet base URL (default http://localhost:8080)",
-      "  WALLET_VALIDATOR_ID — numeric validator slot the party is created on (no default;",
-      "    slot 0 is the network default validator, usually NOT the project's node).",
-      "  WALLET_VALIDATOR_NAME — the node's name, for humans (e.g. zkpc-cantor8-1).",
-      "  WALLET_KEYCLOAK_* — Keycloak the WALLET trusts (falls back to KEYCLOAK_* / VITE_KEYCLOAK_*).",
-      "    A 401 'Key ID … not found in JWKS' means the token came from a Keycloak the",
-      "    wallet does not trust — set WALLET_KEYCLOAK_* to the wallet's issuer.",
-      "",
-      "On success, prints the partyId — set it as VITE_ENTERPRISE_WALLET_PARTY_ID, then",
-      "run `npm run rights:grant` so the Ledger API client can read/act as it.",
-    ].join("\n"));
+    console.log(
+      [
+        "Register an account (party) with the Enterprise Wallet via POST /api/v1/accounts.",
+        "",
+        "Usage:",
+        "  npm run create:account                        # name 'truthoracle-admin', slot from WALLET_VALIDATOR_ID",
+        "  npm run create:account -- --name <name>       # custom account name",
+        "  npm run create:account -- --validator-id <n>  # wallet's numeric validator slot (overrides env)",
+        "  npm run create:account -- --coupon <code>     # onboarding coupon (MainNet)",
+        "  npm run create:account -- --no-preapprove     # don't pre-approve amulet transfers",
+        "  npm run create:account -- --list              # list registered accounts and exit",
+        "",
+        "Config (root `.env`):",
+        "  VITE_ENTERPRISE_WALLET_URL — wallet base URL (default http://localhost:8080)",
+        "  WALLET_VALIDATOR_ID — numeric validator slot the party is created on (no default;",
+        "    slot 0 is the network default validator, usually NOT the project's node).",
+        "  WALLET_VALIDATOR_NAME — the node's name, for humans (e.g. zkpc-cantor8-1).",
+        "  WALLET_KEYCLOAK_* — Keycloak the WALLET trusts (falls back to KEYCLOAK_* / VITE_KEYCLOAK_*).",
+        "    A 401 'Key ID … not found in JWKS' means the token came from a Keycloak the",
+        "    wallet does not trust — set WALLET_KEYCLOAK_* to the wallet's issuer.",
+        "",
+        "On success, prints the partyId — set it as VITE_ENTERPRISE_WALLET_PARTY_ID, then",
+        "run `npm run rights:grant` so the Ledger API client can read/act as it.",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -223,7 +228,9 @@ async function main() {
     return;
   }
 
-  console.log(`\nCreating account "${accountName}" (validatorId=${validatorId}, preApproveAmuletTransfers=${preApprove}${coupon ? ", with coupon" : ""}) …`);
+  console.log(
+    `\nCreating account "${accountName}" (validatorId=${validatorId}, preApproveAmuletTransfers=${preApprove}${coupon ? ", with coupon" : ""}) …`,
+  );
   const createRes = await fetchText(`${WALLET_URL}/api/v1/accounts`, {
     method: "POST",
     headers,

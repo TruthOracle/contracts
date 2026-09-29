@@ -70,7 +70,8 @@ async function getKeycloakAccessToken(opts: {
     body,
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Keycloak token request failed: HTTP ${res.status} ${res.statusText}: ${text.slice(0, 800)}`);
+  if (!res.ok)
+    throw new Error(`Keycloak token request failed: HTTP ${res.status} ${res.statusText}: ${text.slice(0, 800)}`);
   const data = JSON.parse(text);
   const token = data.access_token;
   if (typeof token !== "string" || !token) throw new Error("Keycloak response missing access_token");
@@ -79,24 +80,26 @@ async function getKeycloakAccessToken(opts: {
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log([
-      "Upload a DAR to a Canton participant via the JSON Ledger API (POST /v2/packages).",
-      "",
-      "Usage:",
-      "  npm run dars:upload                             # zkpc (MainNet), daml/.daml/dist/truthoracle-v14-1.0.0.dar",
-      "  npm run dars:upload -- --network devnet         # DevNet participant (VITE_CANTON_PARTICIPANT_URL)",
-      "  npm run dars:upload -- path/to/file.dar         # uploads a specific DAR",
-      "",
-      "Config (root `.env`):",
-      "  --network zkpc (default):",
-      "    ZKPC_LEDGER_API_URL / ZKPC_KEYCLOAK_URL / ZKPC_KEYCLOAK_REALM",
-      "    ZKPC_KEYCLOAK_CLIENT_ID / ZKPC_KEYCLOAK_CLIENT_SECRET",
-      "  --network devnet:",
-      "    VITE_CANTON_PARTICIPANT_URL / VITE_KEYCLOAK_URL / VITE_KEYCLOAK_REALM",
-      "    KEYCLOAK_CLIENT_ID / KEYCLOAK_CLIENT_SECRET (server-only, no VITE_ prefix)",
-      "  The zkpc and devnet Keycloaks hold different clients: exactly one set is",
-      "  read per network, with no fallback to the other network's values.",
-    ].join("\n"));
+    console.log(
+      [
+        "Upload a DAR to a Canton participant via the JSON Ledger API (POST /v2/packages).",
+        "",
+        "Usage:",
+        "  npm run dars:upload                             # zkpc (MainNet), daml/.daml/dist/truthoracle-v14-1.0.0.dar",
+        "  npm run dars:upload -- --network devnet         # DevNet participant (VITE_CANTON_PARTICIPANT_URL)",
+        "  npm run dars:upload -- path/to/file.dar         # uploads a specific DAR",
+        "",
+        "Config (root `.env`):",
+        "  --network zkpc (default):",
+        "    ZKPC_LEDGER_API_URL / ZKPC_KEYCLOAK_URL / ZKPC_KEYCLOAK_REALM",
+        "    ZKPC_KEYCLOAK_CLIENT_ID / ZKPC_KEYCLOAK_CLIENT_SECRET",
+        "  --network devnet:",
+        "    VITE_CANTON_PARTICIPANT_URL / VITE_KEYCLOAK_URL / VITE_KEYCLOAK_REALM",
+        "    KEYCLOAK_CLIENT_ID / KEYCLOAK_CLIENT_SECRET (server-only, no VITE_ prefix)",
+        "  The zkpc and devnet Keycloaks hold different clients: exactly one set is",
+        "  read per network, with no fallback to the other network's values.",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -109,10 +112,7 @@ async function main() {
   const network = parseNetwork(args, "zkpc");
   const networkIdx = args.indexOf("--network");
   const positional = args.filter((a, i) => !a.startsWith("-") && (networkIdx < 0 || i !== networkIdx + 1));
-  const darPath = path.resolve(
-    repoRoot,
-    positional[0] || "daml/.daml/dist/truthoracle-v14-1.0.0.dar",
-  );
+  const darPath = path.resolve(repoRoot, positional[0] || "daml/.daml/dist/truthoracle-v14-1.0.0.dar");
   if (!fs.existsSync(darPath)) {
     throw new Error(`DAR not found: ${darPath}\nBuild it first: cd daml && dpm build`);
   }

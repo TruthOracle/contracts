@@ -51,6 +51,15 @@ Every script takes the acting party from `VITE_ENTERPRISE_WALLET_PARTY_ID`; `con
 and `rights:grant` accept `--party` to override. `--network zkpc` (MainNet) reads the
 `ZKPC_*` block only and never falls back to the DevNet values.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push to a pull request and on `main`: `dpm build --all`,
+the Daml Script suite, an upgrade check of the templates DAR against what the PR's base branch
+builds (same name and a bumped version → `dpm upgrade-check --both`; same name and version but a
+different package id → red, bump the version), the operator scripts' typecheck and prettier, and
+an advisory job that warns when `daml.yaml` is behind the latest stable SDK. The job summary
+prints the package id and the DAR is attached to the run as an artifact.
+
 ## Package versioning
 
 The source is **`truthoracle-v16` 1.0.0**, a fresh lineage deployed from scratch; the v14 and
