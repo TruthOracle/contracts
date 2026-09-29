@@ -1,0 +1,4 @@
+# `dpm build --all` here builds the templates package and then the test package that depends on it.
+packages:
+  - .
+  - ./test

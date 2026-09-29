@@ -101,7 +101,7 @@ Point your frontend/Ledger API client at **localhost:6865** to use the sandbox.
 
 ## Prerequisites
 
-- **DPM with SDK 3.4.10** (matches `daml.yaml`). Install: [DPM install](https://docs.digitalasset.com/build/3.4/dpm/manual-install.html).
+- **dpm with the SDK pinned in `daml.yaml`** (3.5.12 — keep it on the latest stable release, see the repo README "Toolchain") and a JDK. Install: [dpm installation](https://docs.canton.network/sdks-tools/cli-tools/dpm#installation).
 - **Canton** – either:
   - **Local**: DPM sandbox (`dpm sandbox`) or Canton Open Source, or
   - **Canton Network TestNet**: access to a participant node (validator or via a provider).
@@ -114,18 +114,19 @@ From the `daml/` directory:
 
 ```bash
 cd daml
-dpm build
+dpm build --all
 ```
 
-This produces a DAR under `.daml/dist/`:
+This produces the templates DAR under `.daml/dist/` (and the test package's DAR under
+`test/.daml/dist/`, which is never uploaded):
 
-- **Path**: `daml/.daml/dist/truthoracle-v14-1.0.0.dar`
-- **Name**: `truthoracle-v14`, version `1.0.0` (from `daml.yaml`)
+- **Path**: `daml/.daml/dist/truthoracle-v14-1.1.0.dar`
+- **Name**: `truthoracle-v14`, version `1.1.0` (from `daml.yaml`)
 
-Optional: run tests before deploying:
+Run the Daml Script suite before deploying:
 
 ```bash
-dpm test
+cd test && dpm test
 ```
 
 ---
@@ -254,9 +255,9 @@ You can also upload the DAR using the Ledger API **PackageService** (e.g. from a
 
 | Step | Action |
 |------|--------|
-| 1 | `cd daml && dpm build` → get `daml/.daml/dist/truthoracle-v14-1.0.0.dar` |
+| 1 | `cd daml && dpm build --all` → get `daml/.daml/dist/truthoracle-v14-1.1.0.dar` |
 | 2 | Start Canton participant (local or TestNet) and connect to a sync domain |
-| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v14-1.0.0.dar")` |
+| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v14-1.1.0.dar")` |
 | 4 | Allocate parties; point app and frontend to participant Ledger API |
 | 5 | Test with console and/or UI |
 
@@ -281,7 +282,7 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 - [Canton Network](https://www.canton.network/) · [Connect / TestNet](https://www.canton.network/connect) · [Developer resources](https://www.canton.network/developer-resources)
 - [Sync.global – Validator onboarding](https://docs.sync.global/validator_operator/validator_onboarding.html)
 - [Canton Nodes (hosted API)](https://www.cantonnodes.com/)
-- [DAML SDK installation](https://docs.daml.com/getting-started/installation.html)
+- [dpm installation](https://docs.canton.network/sdks-tools/cli-tools/dpm#installation)
 
 ---
 
@@ -291,17 +292,21 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 appended to `PredictionMarket` and to `MarketCounter.CreateMarket`): Canton's SCU check
 accepts it and every 1.0.0 contract keeps working — the new fields read as `None`.
 
-1. `npm run dars:build` → `daml/.daml/dist/truthoracle-v14-1.1.0.dar` (Apple silicon: Rosetta 2
-   once, see the README note). Package id
-   `141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba`.
+1. `npm run dars:build` (SDK 3.5.12; Apple silicon: Rosetta 2 once, see the README note) →
+   `daml/.daml/dist/truthoracle-v14-1.1.0.dar`, package id
+   `ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505`. The DAR carries no daml-script
+   and no test code (the suite is the separate `daml/test` package); the empty
+   `TruthoracleTest` module is what lets the upgrade check pass, since 1.0.0 shipped its
+   suite in that module.
 2. `npm run dars:test` — 15 scenarios including `catalogIdentityOnMarkets` pass.
 3. `cd daml && dpm upgrade-check --both .daml/dist/truthoracle-v14-1.0.0.dar .daml/dist/truthoracle-v14-1.1.0.dar`
-   — the participant's upgrade validator must log "claims to upgrade package 64653d3a…
-   (truthoracle-v14 v1.0.0)" and "Typechecking upgrades for lineage of package-name
+   (the 1.0.0 DAR is the deployed one, built with SDK 3.4.10 — a rebuild of the `main` branch
+   reproduces it) — the participant's upgrade validator must log "claims to upgrade package
+   64653d3a… (truthoracle-v14 v1.0.0)" and "Typechecking upgrades for lineage of package-name
    truthoracle-v14 succeeded" (verified 2026-09-29, exit 0).
 4. `npm run dars:upload -- daml/.daml/dist/truthoracle-v14-1.1.0.dar [-- --network devnet]`
    and confirm the package id above in the DAR's MANIFEST.
-5. Backend: set `TRUTHORACLE_PACKAGE_ID=141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba`
+5. Backend: set `TRUTHORACLE_PACKAGE_ID=ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505`
    (the name stays `truthoracle-v14`) and restart. `POST /admin/markets` then submits
    `CreateMarket` with `ticker` / `eventTicker` / the sub titles; the indexer already
    understands both shapes.

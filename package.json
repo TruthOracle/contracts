@@ -9,8 +9,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dars:build": "cd daml && dpm build",
-    "dars:test": "cd daml && dpm test",
+    "dars:build": "cd daml && dpm build --all",
+    "dars:test": "cd daml && dpm build --all && cd test && dpm test",
     "dars:upload": "tsx scripts/upload-dar.ts",
     "create:contract": "tsx scripts/create-contract.ts",
     "create:account": "tsx scripts/create-account.ts",

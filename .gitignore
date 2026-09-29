@@ -5,7 +5,9 @@
 
 # Daml build output and SDK logs (rebuild with `npm run dars:build`)
 daml/.daml/
+daml/test/.daml/
 daml/log/
+daml/test/log/
 *.log
 
 node_modules/

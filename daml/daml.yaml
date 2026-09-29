@@ -1,7 +1,10 @@
 # TruthOracle - Canton Network DAML contracts
 # Prediction market platform for Canton Network testnet
 
-sdk-version: "3.4.10"
+# Keep on the latest stable release (`curl -sS https://get.digitalasset.com/install/latest`); the
+# Cantor8 participants run Canton 3.5.x. Bumping it changes the package id — re-record it in
+# DEPLOYMENT.md. CI (.github/workflows/ci.yml) warns when a newer release exists.
+sdk-version: "3.5.12"
 # Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v13 -> v14):
 # Canton's smart-contract-upgrade (SCU) check rejects a schema-incompatible DAR
 # uploaded under an existing package name, so a new schema needs a new name.
@@ -14,7 +17,8 @@ sdk-version: "3.4.10"
 name: truthoracle-v14
 version: 1.1.0
 source: daml
+# Templates only. The script suite lives in ./test (its own package, see multi-package.yaml) so the
+# DAR uploaded to the participant carries no daml-script and no test code.
 dependencies:
   - daml-prim
   - daml-stdlib
-  - daml-script

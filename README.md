@@ -8,12 +8,15 @@ contracts, the backend (`../truthoracle-backend`) and the treasury wallet
 ```
 truthoracle-contracts/
 ├── daml/
-│   ├── daml.yaml                 # package name/version (truthoracle-v14 1.0.0) — breaking changes bump the NAME
+│   ├── daml.yaml                 # templates package truthoracle-v14 1.1.0 — breaking changes bump the NAME
+│   ├── multi-package.yaml        # `dpm build --all` builds the templates package, then the test package
 │   ├── daml/Truthoracle.daml     # markets, pm-AMM trades, UserWallet, PendingPayout, resolution tiers
 │   ├── daml/PmAmmMath.daml       # pricing math (mirrored by the frontend's lib/marketPricing.ts)
 │   ├── daml/Incentives.daml      # rewards
 │   ├── daml/Marketplace.daml     # prediction models
-│   ├── daml/TruthoracleTest.daml # `dpm test` suite
+│   ├── daml/TruthoracleTest.daml # empty placeholder: 1.0.0 shipped the suite here and SCU forbids dropping a module
+│   ├── test/daml.yaml            # test package truthoracle-v14-test (daml-script stays out of the uploaded DAR)
+│   ├── test/daml/Test/Truthoracle.daml  # the Daml Script suite (`npm run dars:test`)
 │   ├── README.md / DEPLOYMENT.md # module docs and the deployment runbook
 │   └── *.dar                     # previously uploaded packages (history)
 ├── scripts/                      # tsx operator scripts (see below)
@@ -25,15 +28,17 @@ truthoracle-contracts/
 ## Prerequisites
 
 - Node ≥ 22 and `npm install` (installs `tsx`, `dotenv`, TypeScript).
-- The Daml SDK `dpm` on your PATH (`daml.yaml` pins `sdk-version`). See `daml/README.md`.
+- `dpm` (the Daml SDK) on your PATH and a JDK (`dpm test` and `dpm upgrade-check` are JVM tools;
+  17 works locally, CI uses Temurin 21). `daml/daml.yaml` pins `sdk-version`; keep it on the
+  latest stable release (see "Toolchain" below).
 - A `.env` (copy `.env.example`). The credentials are shared by Cantor8; never commit them.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `npm run dars:build` | `dpm build` → `daml/.daml/dist/<name>-<version>.dar` |
-| `npm run dars:test` | `dpm test` (Daml script suite) |
+| `npm run dars:build` | `dpm build --all` → `daml/.daml/dist/<name>-<version>.dar` (plus the test package's DAR under `daml/test/.daml/dist/`, never uploaded) |
+| `npm run dars:test` | builds both packages, then `dpm test` in `daml/test` (15 Daml Script scenarios) |
 | `npm run dars:upload [-- <path.dar>] [-- --network devnet]` | Upload + vet a DAR (zkpc/MainNet by default; prints the package id to put in `VITE_TRUTHORACLE_PACKAGE_ID`) |
 | `npm run create:contract` | Bootstrap the `MarketCounter` as the admin party via the Enterprise Wallet |
 | `npm run create:account` | Create the admin/treasury party on the Enterprise Wallet (`WALLET_VALIDATOR_*`) |
@@ -66,12 +71,31 @@ backend (`TRUTHORACLE_PACKAGE_ID`) and the frontend (`VITE_TRUTHORACLE_PACKAGE_I
 1.1.0 package id so their commands carry the new fields; the package-*name* filters and the
 indexer are unaffected. Steps: `daml/DEPLOYMENT.md` "Upgrading to truthoracle-v14 1.1.0".
 
-> macOS note: `dpm` 3.4.10 ships `damlc` as an Intel (x86_64) binary only, so an Apple-silicon
-> Mac needs Rosetta 2 once (`softwareupdate --install-rosetta --agree-to-license`); without it
-> `dpm build` fails with "bad CPU type in executable". The build itself is the standard
-> `dpm build`. 1.1.0 was built, tested and upgrade-checked this way on 2026-09-29 — package id
-> `141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba` (a content hash: the same
-> source and SDK reproduce it).
+### Toolchain
+
+`daml/daml.yaml` pins **SDK 3.5.12** (`dpm` 1.0.22, `damlc` 3.5.3, Canton 3.5.19 tooling), the
+latest stable release at the time of writing. The DevNet and MainNet participants answer
+`GET /v2/version` with Canton 3.5.18 and 3.5.16, so an older SDK is behind production, not safer:
+keep the pin on the newest stable release. `curl -sS https://get.digitalasset.com/install/latest`
+prints it; `curl -sSL https://get.digitalasset.com/install/install.sh | sh -s <version>` installs
+it into `~/.dpm` (put `~/.dpm/bin` on PATH). Bumping the SDK changes the package id even with no
+Daml change — the id hashes the compiled package together with its stdlib dependencies — so
+re-record it below and in `daml/DEPLOYMENT.md`.
+
+The Daml Script suite is its own package (`daml/test`, name `truthoracle-v14-test`, module
+`Test.Truthoracle`), as the 3.5 compiler recommends: the DAR that is uploaded carries neither
+daml-script nor test code, and a test-only change no longer changes the production package id.
+`daml/daml/TruthoracleTest.daml` is an empty placeholder because 1.0.0 shipped the suite in that
+module and the SCU check refuses an upgrade that drops a module; it goes away at the next
+package-name bump.
+
+> macOS note: `dpm` ships `damlc` as an Intel (x86_64) binary only (still true for 3.5.12), so an
+> Apple-silicon Mac needs Rosetta 2 once (`softwareupdate --install-rosetta --agree-to-license`);
+> without it `dpm build` fails with "bad CPU type in executable".
+
+1.1.0 was built, tested (15/15) and upgrade-checked against the deployed 1.0.0 with this toolchain
+on 2026-09-29 — package id `ee69246e0dfee2d94a3c7950722f6534ccca8f731020c664f78fa72933f0c505` (a content hash:
+the same source and SDK reproduce it).
 
 
 **Why v14.** v14 is the greenfield accounts era. The on-ledger `UserWallet` is created only
