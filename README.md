@@ -66,9 +66,12 @@ backend (`TRUTHORACLE_PACKAGE_ID`) and the frontend (`VITE_TRUTHORACLE_PACKAGE_I
 1.1.0 package id so their commands carry the new fields; the package-*name* filters and the
 indexer are unaffected. Steps: `daml/DEPLOYMENT.md` "Upgrading to truthoracle-v14 1.1.0".
 
-> Building needs a `damlc` that runs on this machine: the `dpm` 3.4.10 components are x86_64
-> binaries, so on an Apple-silicon Mac without Rosetta `dpm build` fails with "bad CPU type in
-> executable" (`softwareupdate --install-rosetta`, or build in CI / on x86_64).
+> macOS note: `dpm` 3.4.10 ships `damlc` as an Intel (x86_64) binary only, so an Apple-silicon
+> Mac needs Rosetta 2 once (`softwareupdate --install-rosetta --agree-to-license`); without it
+> `dpm build` fails with "bad CPU type in executable". The build itself is the standard
+> `dpm build`. 1.1.0 was built, tested and upgrade-checked this way on 2026-09-29 — package id
+> `141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba` (a content hash: the same
+> source and SDK reproduce it).
 
 
 **Why v14.** v14 is the greenfield accounts era. The on-ledger `UserWallet` is created only

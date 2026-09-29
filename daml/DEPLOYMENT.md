@@ -291,17 +291,23 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 appended to `PredictionMarket` and to `MarketCounter.CreateMarket`): Canton's SCU check
 accepts it and every 1.0.0 contract keeps working — the new fields read as `None`.
 
-1. `npm run dars:build` → `daml/.daml/dist/truthoracle-v14-1.1.0.dar` (needs an x86_64-capable
-   `damlc`; see the README note).
-2. `npm run dars:test` — the suite includes `catalogIdentityOnMarkets`.
-3. `npm run dars:upload -- daml/.daml/dist/truthoracle-v14-1.1.0.dar [-- --network devnet]`
-   and read the package id from the DAR's MANIFEST (above).
-4. Backend: set `TRUTHORACLE_PACKAGE_ID=<1.1.0 id>` (the name stays `truthoracle-v14`) and
-   restart. `POST /admin/markets` then submits `CreateMarket` with `ticker` / `eventTicker` /
-   the sub titles; the indexer already understands both shapes.
-5. Frontend: set `VITE_TRUTHORACLE_PACKAGE_ID=<1.1.0 id>` so the admin console's own
+1. `npm run dars:build` → `daml/.daml/dist/truthoracle-v14-1.1.0.dar` (Apple silicon: Rosetta 2
+   once, see the README note). Package id
+   `141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba`.
+2. `npm run dars:test` — 15 scenarios including `catalogIdentityOnMarkets` pass.
+3. `cd daml && dpm upgrade-check --both .daml/dist/truthoracle-v14-1.0.0.dar .daml/dist/truthoracle-v14-1.1.0.dar`
+   — the participant's upgrade validator must log "claims to upgrade package 64653d3a…
+   (truthoracle-v14 v1.0.0)" and "Typechecking upgrades for lineage of package-name
+   truthoracle-v14 succeeded" (verified 2026-09-29, exit 0).
+4. `npm run dars:upload -- daml/.daml/dist/truthoracle-v14-1.1.0.dar [-- --network devnet]`
+   and confirm the package id above in the DAR's MANIFEST.
+5. Backend: set `TRUTHORACLE_PACKAGE_ID=141125c59bec233ec1fef5d0b5ce9a7bae06152d73f8facd10d7fb28002c45ba`
+   (the name stays `truthoracle-v14`) and restart. `POST /admin/markets` then submits
+   `CreateMarket` with `ticker` / `eventTicker` / the sub titles; the indexer already
+   understands both shapes.
+6. Frontend: set `VITE_TRUTHORACLE_PACKAGE_ID` to the same id so the admin console's own
    `CreateMarket` carries the fields, and redeploy.
-6. Existing markets keep the indexer's synthetic `MKT-<marketId>` ticker until an operator
+7. Existing markets keep the indexer's synthetic `MKT-<marketId>` ticker until an operator
    assigns their event / ticker / labels through `PATCH /admin/markets/:id/catalog`
    (`truthoracle-backend/docs/MARKETS.md` §2).
 
