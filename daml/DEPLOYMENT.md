@@ -88,7 +88,7 @@ Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your
    ```
 3. In the console, upload the DAR (use the full path to your DAR):
    ```bash
-   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-contracts/daml/.daml/dist/truthoracle-v14-1.0.0.dar")
+   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-contracts/daml/.daml/dist/truthoracle-v15-1.0.0.dar")
    ```
 4. Optional: list DARs and allocate parties:
    ```bash
@@ -210,13 +210,13 @@ You need to upload **one DAR** (TruthOracle is a single project). If you later a
 3. Upload the DAR (adjust path to your built DAR):
 
    ```bash
-   participant1.dars.upload("/full/path/to/truthoracle-contracts/daml/.daml/dist/truthoracle-v14-1.0.0.dar")
+   participant1.dars.upload("/full/path/to/truthoracle-contracts/daml/.daml/dist/truthoracle-v15-1.0.0.dar")
    ```
 
    Or copy the DAR into the Canton bundle and use a relative path, e.g.:
 
    ```bash
-   participant1.dars.upload("dars/truthoracle-v14-1.0.0.dar")
+   participant1.dars.upload("dars/truthoracle-v15-1.0.0.dar")
    ```
 
 4. Note the returned **hash**; the DAR is uploaded and (by default) **vetted**, so contracts from this package can be used immediately.
