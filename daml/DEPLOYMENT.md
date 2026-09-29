@@ -57,7 +57,7 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
      | sed -E 's/.*-([0-9a-f]{64})$/\1/'
    ```
 
-   Both print the 64-hex package ID (`95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1` for v15 1.0.0 built with SDK 3.5.12). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
+   Both print the 64-hex package ID (`95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1` for v16 1.0.0 built with SDK 3.5.12). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
 
    To confirm the participant has it, `curl -H "Authorization: Bearer $TOKEN" "$LEDGER_API/v2/packages"` returns `{"packageIds":[…]}` — the new ID will be in that list (the endpoint doesn't label them, so cross-reference by the ID you extracted above).
 
@@ -307,11 +307,11 @@ are abandoned (as v13's were); nothing is migrated. Every market is created anew
    confirm the package id above in the DAR's MANIFEST.
 4. In `.env`: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v16`,
    `VITE_TRUTHORACLE_PACKAGE_ID=95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1`, then
-   `npm run create:contract` to bootstrap the v15 `MarketCounter` as the admin party (the v14
+   `npm run create:contract` to bootstrap the v16 `MarketCounter` as the admin party (the v15 and v14
    counter belongs to the old package and is left alone).
 5. Backend: `TRUTHORACLE_PACKAGE_NAME=truthoracle-v16` and
    `TRUTHORACLE_PACKAGE_ID=95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1`; start it against a fresh
-   database (or resync the index — the v15 index never contains v14 rows). `POST /admin/markets`
+   database (or resync the index — the v16 index never contains v14 / v15 rows). `POST /admin/markets`
    requires `ticker` and `eventTicker` and defaults the sub titles to "Yes" / "No".
 6. Frontend: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v16` and `VITE_TRUTHORACLE_PACKAGE_ID`
    as above, and redeploy; the admin console's `CreateMarket` form requires the ticker and the
