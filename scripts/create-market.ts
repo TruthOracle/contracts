@@ -3,22 +3,40 @@
  *
  * Exercises MarketCounter.CreateMarket through the Enterprise Wallet's single-call
  * POST /api/v1/external/submit (the wallet prepares, signs and executes as the admin party).
- * The catalog side (series / event rows) is NOT written here: the backend indexer creates
- * placeholder rows for an unknown event ticker and an operator renames them later. The
- * operator console (`POST /admin/markets` in truthoracle-backend) is the primary path — it
- * validates the catalog first — so use this script for bootstrapping and smoke tests.
+ * Since truthoracle-v17 a market is denominated in one CIP-56 collateral instrument
+ * (`{ admin, id }`, fixed at creation): shares cost <= 1 unit, a winning share pays 1 unit,
+ * fees and bonds are in it, and only UserWallets holding that instrument can trade it
+ * (truthoracle-backend docs/TOKENS.md). The catalog side (series / event rows) is NOT written
+ * here: the backend indexer creates placeholder rows for an unknown event ticker and an operator
+ * renames them later. The operator console (`POST /admin/markets` in truthoracle-backend) is the
+ * primary path — it validates the catalog and the event's collateral first — so use this script
+ * for bootstrapping and smoke tests.
  *
  * Usage:
  *   npm run create:market -- --ticker FED-26DEC-CUT25 --event FED-26DEC \
  *     --question "Will the Fed cut by at least 25 bps in December 2026?" \
  *     --yes "Cut of 25 bps or more" --no "Smaller cut, hold or hike" \
  *     --rules "Resolves YES if the FOMC statement lowers the target range by >= 25 bps." \
- *     --expires 2026-12-16T19:00:00Z --p0 0.35 --value 200 [--fee 30] [--prize-share 2000] \
- *     [--dynamic] [--liquidity-period-secs 0] [--grace-secs 86400] [--counter <MarketCounter cid>]
+ *     --expires 2026-12-16T19:00:00Z --p0 0.35 --initial-value 200 \
+ *     [--collateral-admin <party> --collateral-id <text>] [--fee 30] [--prize-share 2000] \
+ *     [--dynamic] [--liquidity-period-secs 0] [--grace-secs 86400] [--counter <MarketCounter cid>] \
+ *     [--audit-observers <party,party>]
+ *
+ * --collateral-admin / --collateral-id default to COLLATERAL_INSTRUMENT_ADMIN /
+ * COLLATERAL_INSTRUMENT_ID from .env (DevNet stand-in: the DSO party / Amulet, i.e. Canton Coin,
+ * until Cantor8 deploys cBYN) and are required when neither source sets them. --initial-value is
+ * the seed pool value in units of that instrument.
+ *
+ * The market's `auditObservers` are AUDIT_OBSERVER_PARTIES from .env (the regulator; comma
+ * separated) plus whatever --audit-observers adds. The flag widens the list and never drops the
+ * configured parties — the same rule as the backend's POST /admin/markets (TOKENS.md §2.4) — so a
+ * market, and every bond or model-prize PendingPayout it later queues, is visible to the regulator
+ * whichever path created it.
  *
  * Required .env: VITE_TRUTHORACLE_PACKAGE_ID, VITE_TRUTHORACLE_PACKAGE_NAME,
  *   VITE_ENTERPRISE_WALLET_PARTY_ID, KEYCLOAK_* (wallet + ledger tokens),
  *   VITE_CANTON_PARTICIPANT_URL (to find the active MarketCounter when --counter is omitted).
+ * Optional .env: AUDIT_OBSERVER_PARTIES (blank = no regulator on the market; the script says so).
  */
 
 import dotenv from "dotenv";
@@ -30,6 +48,35 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(here, "..", ".env") });
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+
+const USAGE = [
+  "Create a PredictionMarket as the treasury (MarketCounter.CreateMarket via the Enterprise Wallet).",
+  "",
+  "Usage:",
+  "  npm run create:market -- --ticker <TICKER> --event <EVENT-TICKER> --question <text> --expires <UTC ISO-8601> \\",
+  '    [--yes "Yes"] [--no "No"] [--rules <resolution terms>] [--p0 0.5] [--initial-value 100] \\',
+  "    [--collateral-admin <party> --collateral-id <text>] [--fee 30] [--prize-share 2000] \\",
+  "    [--dynamic] [--liquidity-period-secs 0] [--grace-secs 86400] [--counter <MarketCounter cid>] \\",
+  "    [--audit-observers <party,party>]",
+  "",
+  "Collateral (the CIP-56 instrument the market is denominated in; fixed at creation):",
+  "  --collateral-admin   instrument admin party; default COLLATERAL_INSTRUMENT_ADMIN (.env)",
+  "  --collateral-id      instrument id, e.g. cBYN or Amulet; default COLLATERAL_INSTRUMENT_ID (.env)",
+  "  Both are required: the script refuses to run when neither the flag nor the variable is set.",
+  "  --initial-value      seed pool value in units of the collateral (default 100)",
+  "",
+  "Audit observers (the regulator; observers on the market and on every PendingPayout it queues):",
+  "  --audit-observers    comma separated party ids ADDED to AUDIT_OBSERVER_PARTIES (.env). The flag",
+  "                       widens the list, it cannot drop the configured parties (same as POST /admin/markets).",
+  "",
+  "Timing: --expires is read as UTC unless it carries an offset; createdAt is now (UTC).",
+  "",
+  "Required .env: VITE_TRUTHORACLE_PACKAGE_ID, VITE_TRUTHORACLE_PACKAGE_NAME, VITE_ENTERPRISE_WALLET_PARTY_ID,",
+  "  KEYCLOAK_URL / KEYCLOAK_CLIENT_ID / KEYCLOAK_CLIENT_SECRET (or the VITE_KEYCLOAK_* URL/realm),",
+  "  VITE_CANTON_PARTICIPANT_URL (to find the active MarketCounter when --counter is omitted).",
+  "Optional .env: AUDIT_OBSERVER_PARTIES (comma separated regulator parties; blank = none, the script says so),",
+  "  VITE_ENTERPRISE_WALLET_URL (default http://localhost:8080), VITE_ENTERPRISE_WALLET_APP_NAME (default truthoracle).",
+].join("\n");
 
 function viteEnv(name: string) {
   const v = process.env[name];
@@ -53,6 +100,37 @@ function mustArg(name: string): string {
   const v = arg(name);
   if (!v || v.startsWith("--")) throw new Error(`Missing --${name}`);
   return v;
+}
+/** A flag that falls back to an .env variable; one of the two must be set. */
+function argOrEnv(name: string, envName: string): string {
+  const fromArg = arg(name);
+  if (fromArg && !fromArg.startsWith("--")) return fromArg;
+  const fromEnv = viteEnv(envName);
+  if (fromEnv) return fromEnv;
+  throw new Error(`Missing --${name} (or ${envName} in .env)`);
+}
+
+/** A list flag; given without a value it is an error rather than a silent no-op. */
+function listArg(name: string): string {
+  if (!flag(name)) return "";
+  const v = arg(name);
+  if (!v || v.startsWith("--")) throw new Error(`Missing value for --${name} (comma separated party ids)`);
+  return v;
+}
+
+/** Canton party id, `<hint>::1220<64 hex>` — the check the backend applies to AUDIT_OBSERVER_PARTIES. */
+const PARTY_ID = /^[A-Za-z0-9_.-]{1,255}::1220[0-9a-f]{64}$/;
+
+/** Comma / whitespace separated party ids; blanks dropped, anything that is not a party id refused. */
+function partyList(raw: string, source: string): string[] {
+  const parties = raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const party of parties) {
+    if (!PARTY_ID.test(party)) throw new Error(`${source}: not a Canton party id: ${party.slice(0, 24)}…`);
+  }
+  return parties;
 }
 
 const TICKER = /^[A-Z0-9][A-Z0-9._-]{1,63}$/;
@@ -90,7 +168,11 @@ async function keycloakToken(): Promise<string> {
   return data.access_token;
 }
 
-/** The single active MarketCounter of the package, as seen by the admin party. */
+/**
+ * The single active MarketCounter of the package, as seen by the admin party. The request uses
+ * the `eventFormat` shape: Canton 3.6 disables the legacy `filter` / top-level `verbose` fields
+ * of /v2/state/active-contracts (DEPRECATED_API_DISABLED).
+ */
 async function findMarketCounter(
   token: string,
   party: string,
@@ -100,9 +182,8 @@ async function findMarketCounter(
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   const end = (await (await fetch(`${ledger}/v2/state/ledger-end`, { headers })).json()) as { offset?: number };
   const body = {
-    verbose: false,
     activeAtOffset: String(end.offset ?? 0),
-    filter: {
+    eventFormat: {
       filtersByParty: {
         [party]: {
           cumulative: [
@@ -116,6 +197,7 @@ async function findMarketCounter(
           ],
         },
       },
+      verbose: false,
     },
   };
   const res = await fetch(`${ledger}/v2/state/active-contracts`, {
@@ -137,7 +219,7 @@ async function findMarketCounter(
 
 async function main() {
   if (flag("help") || flag("h")) {
-    console.log("See the header comment of scripts/create-market.ts for usage.");
+    console.log(USAGE);
     return;
   }
   const packageId = mustEnv(viteEnv("VITE_TRUTHORACLE_PACKAGE_ID"), "VITE_TRUTHORACLE_PACKAGE_ID");
@@ -161,10 +243,26 @@ async function main() {
   const expiresAt = parseUtcSeconds(mustArg("expires"));
   const now = Math.floor(Date.now() / 1000);
   if (expiresAt <= now) throw new Error("--expires must be in the future");
+  // The collateral instrument: admin = the registry party (cBYN: Cantor8's transfer agent;
+  // Canton Coin: the DSO), id = the token identifier. Both halves are required because a
+  // market's denomination can never be changed afterwards.
+  const collateral = {
+    admin: argOrEnv("collateral-admin", "COLLATERAL_INSTRUMENT_ADMIN"),
+    id: argOrEnv("collateral-id", "COLLATERAL_INSTRUMENT_ID"),
+  };
+  // Regulator visibility is not optional: the configured parties are always observers and the
+  // flag can only widen the list (the backend's POST /admin/markets applies the same rule). The
+  // market copies them onto every bond and model-prize PendingPayout it queues.
+  const auditObservers = [
+    ...new Set([
+      ...partyList(viteEnv("AUDIT_OBSERVER_PARTIES"), "AUDIT_OBSERVER_PARTIES"),
+      ...partyList(listArg("audit-observers"), "--audit-observers"),
+    ]),
+  ];
   const p0 = Number(arg("p0") ?? "0.5");
   if (!(p0 >= 0.01 && p0 <= 0.99)) throw new Error("--p0 must be within [0.01, 0.99]");
-  const value = Number(arg("value") ?? "100");
-  if (!(value > 0)) throw new Error("--value must be positive");
+  const initialValue = Number(arg("initial-value") ?? "100");
+  if (!(initialValue > 0)) throw new Error("--initial-value must be positive");
   const feeBps = Number(arg("fee") ?? "30");
   const prizeShareBps = Number(arg("prize-share") ?? "2000");
   const liquidityPeriodSecs = Number(arg("liquidity-period-secs") ?? "0");
@@ -187,13 +285,14 @@ async function main() {
     yesSubTitle,
     noSubTitle,
     resolutionDescription: rules,
+    collateral,
     createdAt: String(now),
     expiresAt: String(expiresAt),
     gracePeriodSecs: String(graceSecs),
     isDynamic,
     liquidityPeriodSecs: String(liquidityPeriodSecs),
     initialProbability: p0.toFixed(10),
-    initialValueCC: value.toFixed(10),
+    initialValue: initialValue.toFixed(10),
     feeBps: String(feeBps),
     prizeFeeShareBps: String(prizeShareBps),
     policy: {
@@ -203,9 +302,9 @@ async function main() {
       reporters: [],
       quorum: "0",
       challengeSecs: "0",
-      bondCC: "0.0000000000",
+      bond: "0.0000000000",
     },
-    auditObservers: [],
+    auditObservers,
   };
   const body = {
     partyId: party,
@@ -223,7 +322,14 @@ async function main() {
     ],
     disclosedContracts: [],
   };
-  console.log(`Submitting CreateMarket ${ticker} (event ${eventTicker}) via ${walletUrl}/api/v1/external/submit …`);
+  console.log(
+    auditObservers.length
+      ? `Audit observers: ${auditObservers.map((p) => `${p.slice(0, 24)}…`).join(", ")}`
+      : "Audit observers: none — AUDIT_OBSERVER_PARTIES is blank, so no regulator party will see this market.",
+  );
+  console.log(
+    `Submitting CreateMarket ${ticker} (event ${eventTicker}, collateral ${collateral.id} @ ${collateral.admin.slice(0, 24)}…, initial value ${initialValue}) via ${walletUrl}/api/v1/external/submit …`,
+  );
   const res = await fetch(`${walletUrl}/api/v1/external/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },

@@ -17,6 +17,21 @@ function stripTrailingSlash(url: string) {
   return url.replace(/\/$/, "");
 }
 
+/**
+ * `name:` / `version:` of daml/daml.yaml — the package this checkout builds, matched line by
+ * line the way CI reads them (.github/workflows/ci.yml), so no script carries a package name or
+ * DAR path that outlives the next lineage bump.
+ */
+function damlPackage(repoRoot: string): { name: string; version: string } {
+  const text = fs.readFileSync(path.join(repoRoot, "daml", "daml.yaml"), "utf8");
+  const field = (key: string) => {
+    const m = text.match(new RegExp(`^${key}:[ \\t]*"?([^"\\s]+)"?`, "m"));
+    if (!m) throw new Error(`daml/daml.yaml has no \`${key}:\` field`);
+    return m[1];
+  };
+  return { name: field("name"), version: field("version") };
+}
+
 type Network = "devnet" | "zkpc";
 
 function parseNetwork(argv: string[], fallback: Network): Network {
@@ -85,7 +100,7 @@ async function main() {
         "Upload a DAR to a Canton participant via the JSON Ledger API (POST /v2/packages).",
         "",
         "Usage:",
-        "  npm run dars:upload                             # zkpc (MainNet), daml/.daml/dist/truthoracle-v14-1.0.0.dar",
+        "  npm run dars:upload                             # zkpc (MainNet), the DAR daml/daml.yaml names: daml/.daml/dist/<name>-<version>.dar",
         "  npm run dars:upload -- --network devnet         # DevNet participant (VITE_CANTON_PARTICIPANT_URL)",
         "  npm run dars:upload -- path/to/file.dar         # uploads a specific DAR",
         "",
@@ -112,9 +127,12 @@ async function main() {
   const network = parseNetwork(args, "zkpc");
   const networkIdx = args.indexOf("--network");
   const positional = args.filter((a, i) => !a.startsWith("-") && (networkIdx < 0 || i !== networkIdx + 1));
-  const darPath = path.resolve(repoRoot, positional[0] || "daml/.daml/dist/truthoracle-v14-1.0.0.dar");
+  // Default: the DAR `dpm build` produces for daml/daml.yaml's name and version. Derived, not
+  // written down — a hard-coded path outlived two lineage bumps and uploaded the wrong package.
+  const pkg = damlPackage(repoRoot);
+  const darPath = path.resolve(repoRoot, positional[0] || `daml/.daml/dist/${pkg.name}-${pkg.version}.dar`);
   if (!fs.existsSync(darPath)) {
-    throw new Error(`DAR not found: ${darPath}\nBuild it first: cd daml && dpm build`);
+    throw new Error(`DAR not found: ${darPath}\nBuild it first: npm run dars:build`);
   }
 
   const net = networkConfig(network);

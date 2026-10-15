@@ -207,8 +207,9 @@ async function main() {
   await fetchJson(`${LEDGER_API}/v2/state/active-contracts`, {
     method: "POST",
     headers,
+    // `eventFormat` only: Canton 3.6 refuses the legacy top-level `verbose` / `filter` pair
+    // with DEPRECATED_API_DISABLED.
     body: JSON.stringify({
-      verbose: false,
       activeAtOffset,
       eventFormat: {
         filtersByParty: {

@@ -13,25 +13,38 @@
 --       with bonds and objective escalation to T1/T2.
 --   * Void as a first-class outcome (cost-basis refunds).
 --
--- Collateral rails (in-app wallet architecture):
---   * UserWallet: a per-user on-ledger CC balance custodied by the admin
---     treasury. Deposits are real CC transfers (Cantor8 / any Canton wallet)
---     to the admin, which the admin then credits via Deposit; the contract
---     does NOT verify the transfer - reconcile off-chain. The trust boundary
---     is confined to deposit/withdraw instead of every trade.
+-- Collateral rails (in-app wallet architecture, one instrument per market):
+--   * InstrumentId { admin, id } names a CIP-56 token - cBYN under Cantor8's
+--     transfer agent, Canton Coin under the DSO, TRO under its issuer. Every
+--     market is denominated in exactly one of them, `collateral`, fixed at
+--     creation: shares cost <= 1 unit, a winning share pays 1 unit, fees and
+--     bonds are in it. Nothing on the ledger is Canton-Coin-specific.
+--   * UserWallet: one contract per (owner, instrument) - an on-ledger balance
+--     custodied by the admin treasury. Deposits are real token transfers
+--     (Cantor8 / any Canton wallet) to the admin, which the admin then credits
+--     via Deposit; Grant credits rewards and bonuses the treasury funds itself.
+--     The contract does NOT verify the transfer - the backend reconciles
+--     against the ledger index. The trust boundary is confined to
+--     deposit/grant/withdraw instead of every trade.
 --   * Buy / Split / ProvideLiquidity / T3 bonds: debit the user's UserWallet
 --     atomically inside the exercising transaction - one wallet action per
---     trade, no prior CC-transfer popup.
+--     trade, no prior transfer popup. The wallet must hold the market's
+--     collateral: a TRO wallet can never pay for a cBYN market.
 --   * Sell / Merge / Redeem / WithdrawLiquidity: credit the UserWallet
---     atomically - proceeds are spendable immediately, no payout batching.
+--     atomically, under the same instrument check - proceeds are spendable
+--     immediately, no payout batching.
 --   * External withdrawals and admin-driven payouts (T3 bond settlement,
---     model prizes) still go through PendingPayout: the admin settles either
---     off-ledger via the Enterprise Wallet (MarkPaid) or into the in-app
---     balance (SettleToWallet).
+--     model prizes) go through PendingPayout, which names the instrument it is
+--     owed in: the admin settles either off-ledger through the treasury
+--     (MarkPaid) or into the in-app balance of a wallet holding that
+--     instrument (SettleToWallet).
+--   * auditObservers (the regulator) observe wallets and payouts as well as
+--     markets, positions and forecasts, so balances and money owed are visible
+--     to holder, operator and regulator alike.
 
 module Truthoracle where
 
-import DA.Action (when)
+import DA.Action (when, void)
 import DA.List (dedup, head)
 import DA.Optional (isNone, fromOptional)
 import DA.Crypto.Text (secp256k1, isHex)
@@ -52,6 +65,16 @@ data Outcome = Yes | No | VoidOutcome
 data MarketStatus = Trading | Proposed | Resolved | Voided
   deriving (Eq, Show)
 
+-- A CIP-56 (Canton token standard) instrument: `admin` is the registry party
+-- (cBYN: Cantor8's transfer agent; Canton Coin: the DSO), `id` the token
+-- identifier ("cBYN", "Amulet", "TRO"). Same JSON shape as
+-- Splice.Api.Token.HoldingV1.InstrumentId, so off-ledger code compares the two
+-- field by field; declared here so this package needs no data-dependencies.
+data InstrumentId = InstrumentId with
+    admin : Party
+    id : Text
+  deriving (Eq, Show)
+
 -- (sourceUri, pinned secp256k1 public key) for T1 first-party verification.
 data SourceKey = SourceKey with
     sourceUri : Text
@@ -66,7 +89,7 @@ data ResolutionPolicy = ResolutionPolicy with
     reporters : [Party]         -- T2: allowlisted reporter parties
     quorum : Int                -- T2: M-of-N agreement threshold
     challengeSecs : Int         -- T3: challenge window (0 disables T3)
-    bondCC : Decimal            -- T3: proposer/challenger bond
+    bond : Decimal              -- T3: proposer/challenger bond, in the market's collateral
   deriving (Eq, Show)
 
 -- T3 optimistic-flow state, held inline on the Market while Proposed.
@@ -74,7 +97,7 @@ data ProposalInfo = ProposalInfo with
     proposer : Party
     proposedOutcome : Outcome
     proposedAt : Int            -- epoch seconds
-    bondCC : Decimal
+    bond : Decimal              -- in the market's collateral
     challenger : Optional Party
     challengerOutcome : Optional Outcome
   deriving (Eq, Show)
@@ -107,48 +130,71 @@ lookupSourceKey keys uri = case filter (\k -> k.sourceUri == uri) keys of
   [] -> None
 
 -- ---------------------------------------------------------------------------
--- UserWallet: the in-app CC balance (custodial claim on the admin treasury)
+-- UserWallet: the in-app balance of one instrument (custodial claim on the
+-- admin treasury). One contract per (owner, instrument); `instrument` never
+-- changes, so a market can only ever move money through a wallet that holds
+-- its own collateral.
 -- ---------------------------------------------------------------------------
 
 template UserWallet
   with
-    admin : Party           -- treasury custodian (Enterprise Wallet party)
+    admin : Party             -- treasury custodian (Enterprise Wallet party)
     owner : Party
-    balanceCC : Decimal     -- spendable in-app balance
-    depositedCC : Decimal   -- lifetime external deposits (reconciliation)
-    withdrawnCC : Decimal   -- lifetime external withdrawals (reconciliation)
-    depositRefs : [Text]    -- txRefs already credited, newest first; Deposit refuses a repeat
+    instrument : InstrumentId -- what every amount below is denominated in; immutable
+    balance : Decimal         -- spendable in-app balance
+    deposited : Decimal       -- lifetime external deposits (reconciliation)
+    withdrawn : Decimal       -- lifetime external withdrawals (reconciliation)
+    creditRefs : [Text]       -- refs already applied (deposits AND grants), newest first
+    auditObservers : [Party]  -- compliance observers (the regulator)
   where
     signatory admin
-    observer owner
-    ensure balanceCC >= 0.0 && depositedCC >= 0.0 && withdrawnCC >= 0.0
+    observer owner, auditObservers
+    ensure balance >= 0.0 && deposited >= 0.0 && withdrawn >= 0.0
 
-    -- External top-up: the admin credits after receiving the owner's real CC
-    -- transfer. txRef is recorded on the contract, so which transfers were credited
-    -- is an on-ledger invariant rather than an off-chain derivation, and replaying a
-    -- credit for the same transfer aborts here even if it slips past command-dedup.
+    -- External top-up: the admin credits after the owner's real transfer of
+    -- `instrument` landed in the treasury. txRef is recorded on the contract, so
+    -- which transfers were credited is an on-ledger invariant rather than an
+    -- off-chain derivation, and replaying a credit for the same transfer aborts
+    -- here even if it slips past command-dedup.
     choice Deposit : ContractId UserWallet
       with
-        amountCC : Decimal
+        amount : Decimal
         txRef : Text
       controller admin
       do
-        assertMsg "deposit must be positive" (amountCC > 0.0)
-        assertMsg "txRef was already credited" (notElem txRef depositRefs)
+        assertMsg "deposit must be positive" (amount > 0.0)
+        assertMsg "txRef was already credited" (notElem txRef creditRefs)
         create this with
-          balanceCC = balanceCC + amountCC
-          depositedCC = depositedCC + amountCC
-          depositRefs = txRef :: depositRefs
+          balance = balance + amount
+          deposited = deposited + amount
+          creditRefs = txRef :: creditRefs
+
+    -- Treasury-funded credit that is not a deposit: rewards, bonuses, operator
+    -- corrections. Shares the ref namespace with Deposit so a grant is applied
+    -- at most once; `deposited` is untouched because nothing came in from
+    -- outside, which keeps the deposit reconciliation honest.
+    choice Grant : ContractId UserWallet
+      with
+        amount : Decimal
+        ref : Text
+        reason : Text
+      controller admin
+      do
+        assertMsg "grant must be positive" (amount > 0.0)
+        assertMsg "ref was already credited" (notElem ref creditRefs)
+        create this with
+          balance = balance + amount
+          creditRefs = ref :: creditRefs
 
     -- Internal credit (trade proceeds, redemptions, payout settlement).
     choice Credit : ContractId UserWallet
       with
-        amountCC : Decimal
+        amount : Decimal
         reason : Text
       controller admin
       do
-        assertMsg "credit must be positive" (amountCC > 0.0)
-        create this with balanceCC = balanceCC + amountCC
+        assertMsg "credit must be positive" (amount > 0.0)
+        create this with balance = balance + amount
 
     -- Internal debit. Requires BOTH the owner's and the admin's authority, so
     -- it is only reachable from inside a market choice (owner = exercising
@@ -156,88 +202,98 @@ template UserWallet
     -- or burn a balance unilaterally.
     choice Debit : ContractId UserWallet
       with
-        amountCC : Decimal
+        amount : Decimal
         reason : Text
       controller owner, admin
       do
-        assertMsg "debit must be positive" (amountCC > 0.0)
-        assertMsg "insufficient in-app balance" (balanceCC >= amountCC)
-        create this with balanceCC = balanceCC - amountCC
+        assertMsg "debit must be positive" (amount > 0.0)
+        assertMsg "insufficient in-app balance" (balance >= amount)
+        create this with balance = balance - amount
 
-    -- Owner moves in-app CC back to an external wallet: debits the balance
-    -- and queues a PendingPayout (marketId 0 = not market-specific) for the
-    -- admin to settle via the Enterprise Wallet.
+    -- Owner moves in-app funds back to an external wallet: debits the balance
+    -- and queues a PendingPayout in this wallet's instrument (marketId 0 = not
+    -- market-specific) for the admin to settle through the treasury.
     choice Withdraw : (ContractId UserWallet, ContractId PendingPayout)
       with
-        amountCC : Decimal
+        amount : Decimal
         nowSeconds : Int
       controller owner
       do
-        assertMsg "withdrawal must be positive" (amountCC > 0.0)
-        assertMsg "insufficient in-app balance" (balanceCC >= amountCC)
+        assertMsg "withdrawal must be positive" (amount > 0.0)
+        assertMsg "insufficient in-app balance" (balance >= amount)
         newCid <- create this with
-          balanceCC = balanceCC - amountCC
-          withdrawnCC = withdrawnCC + amountCC
+          balance = balance - amount
+          withdrawn = withdrawn + amount
         payoutCid <- create PendingPayout with
           admin, user = owner, marketId = 0
-          amountCC
+          instrument, amount
           reason = "withdraw"
           createdAt = nowSeconds
+          auditObservers
         return (newCid, payoutCid)
 
 -- Fetch-validate-debit helper for market choices: charges the exercising
--- user's in-app wallet. Passes the cid through unchanged on a zero amount
--- (e.g. zero-bond policies).
+-- user's in-app wallet, which must hold the market's collateral. Passes the
+-- cid through unchanged on a zero amount (e.g. zero-bond policies).
 debitUserWallet
-  : Party -> Party -> ContractId UserWallet -> Decimal -> Text
+  : Party -> Party -> InstrumentId -> ContractId UserWallet -> Decimal -> Text
  -> Update (ContractId UserWallet)
-debitUserWallet admin owner walletCid amountCC reason =
-  if amountCC <= 0.0 then return walletCid
+debitUserWallet admin owner collateral walletCid amount reason =
+  if amount <= 0.0 then return walletCid
   else do
     w <- fetch walletCid
     assertMsg "wallet belongs to a different owner" (w.owner == owner)
     assertMsg "wallet is managed by a different admin" (w.admin == admin)
-    exercise walletCid Debit with amountCC, reason
+    assertMsg "wallet holds a different instrument than the market's collateral"
+      (w.instrument == collateral)
+    exercise walletCid Debit with amount, reason
 
 -- Fetch-validate-credit helper for market choices: pays proceeds into the
--- exercising user's in-app wallet. Cid passthrough on a zero amount.
+-- exercising user's in-app wallet, which must hold the market's collateral.
+-- Cid passthrough on a zero amount.
 creditUserWallet
-  : Party -> Party -> ContractId UserWallet -> Decimal -> Text
+  : Party -> Party -> InstrumentId -> ContractId UserWallet -> Decimal -> Text
  -> Update (ContractId UserWallet)
-creditUserWallet admin owner walletCid amountCC reason =
-  if amountCC <= 0.0 then return walletCid
+creditUserWallet admin owner collateral walletCid amount reason =
+  if amount <= 0.0 then return walletCid
   else do
     w <- fetch walletCid
     assertMsg "wallet belongs to a different owner" (w.owner == owner)
     assertMsg "wallet is managed by a different admin" (w.admin == admin)
-    exercise walletCid Credit with amountCC, reason
+    assertMsg "wallet holds a different instrument than the market's collateral"
+      (w.instrument == collateral)
+    exercise walletCid Credit with amount, reason
 
 -- ---------------------------------------------------------------------------
--- Payout queue (admin owes user CC for flows that cannot debit/credit a
--- wallet inline: external withdrawals, T3 bond settlement, model prizes)
+-- Payout queue: the admin owes the user `amount` of `instrument` for flows that
+-- cannot debit/credit a wallet inline (external withdrawals, T3 bond
+-- settlement, model prizes). A market queues payouts in its collateral; a
+-- withdrawal queues them in the wallet's instrument.
 -- ---------------------------------------------------------------------------
 
 template PendingPayout
   with
     admin : Party
     user : Party
-    marketId : Int   -- 0 = not market-specific (withdrawals)
-    amountCC : Decimal
-    reason : Text   -- "withdraw" | "liquidity" | "bond" | "model-prize"
+    marketId : Int            -- 0 = not market-specific (withdrawals)
+    instrument : InstrumentId -- what `amount` is denominated in
+    amount : Decimal
+    reason : Text             -- "withdraw" | "liquidity" | "bond" | "model-prize"
     createdAt : Int
+    auditObservers : [Party]
   where
     signatory admin
-    observer user
+    observer user, auditObservers
 
-    -- Settled off-ledger: the admin sent real CC via the Enterprise Wallet.
+    -- Settled off-ledger: the admin sent `amount` of `instrument` from the treasury.
     choice MarkPaid : ()
       with
         txHash : Text
       controller admin
       do return ()
 
-    -- Settled on-ledger: credit the user's in-app wallet instead of sending
-    -- external CC.
+    -- Settled on-ledger: credit the user's in-app wallet for this instrument
+    -- instead of sending tokens out.
     choice SettleToWallet : ContractId UserWallet
       with
         walletCid : ContractId UserWallet
@@ -246,11 +302,12 @@ template PendingPayout
         w <- fetch walletCid
         assertMsg "wallet belongs to a different user" (w.owner == user)
         assertMsg "wallet is managed by a different admin" (w.admin == admin)
-        exercise walletCid Credit with amountCC, reason
+        assertMsg "wallet holds a different instrument than the payout" (w.instrument == instrument)
+        exercise walletCid Credit with amount, reason
 
     -- User escape hatch. For a withdrawal (or any payout), passing the
-    -- user's wallet re-credits the amount to the in-app balance; None just
-    -- forfeits the payout.
+    -- user's wallet for this instrument re-credits the amount to the in-app
+    -- balance; None just forfeits the payout.
     choice CancelPayout : Optional (ContractId UserWallet)
       with
         refundWalletCid : Optional (ContractId UserWallet)
@@ -262,9 +319,17 @@ template PendingPayout
             w <- fetch wCid
             assertMsg "wallet belongs to a different user" (w.owner == user)
             assertMsg "wallet is managed by a different admin" (w.admin == admin)
+            assertMsg "wallet holds a different instrument than the payout" (w.instrument == instrument)
             Some <$> exercise wCid Credit with
-              amountCC
+              amount
               reason = "cancel:" <> reason
+
+-- Queue an admin-owed payout in the market's collateral (bonds, model prizes),
+-- visible to the market's audit observers.
+queuePayout : Party -> Party -> Int -> InstrumentId -> [Party] -> Decimal -> Text -> Int -> Update ()
+queuePayout admin user marketId instrument auditObservers amount reason createdAt =
+  void $ create PendingPayout with
+    admin, user, marketId, instrument, amount, reason, createdAt, auditObservers
 
 -- ---------------------------------------------------------------------------
 -- Position: a trader's YES/NO share holding for one market
@@ -277,12 +342,12 @@ template Position
     marketId : Int
     yesShares : Decimal
     noShares : Decimal
-    costBasisCC : Decimal   -- lifetime CC spent on this market (void refunds / accounting)
+    costBasis : Decimal     -- lifetime collateral spent on this market (void refunds / accounting)
     auditObservers : [Party]
   where
     signatory holder
     observer admin, auditObservers
-    ensure yesShares >= 0.0 && noShares >= 0.0 && costBasisCC >= 0.0
+    ensure yesShares >= 0.0 && noShares >= 0.0 && costBasis >= 0.0
 
 -- Create-or-update helper used by market choices (controller supplies the
 -- holder's authority; the market's signatory supplies the admin's).
@@ -297,7 +362,7 @@ upsertPosition holder admin marketId auditObservers dYes dNo dCost optCid =
       holder, admin, marketId, auditObservers
       yesShares = dYes
       noShares = dNo
-      costBasisCC = dCost
+      costBasis = dCost
     Some cid -> do
       pos <- fetch cid
       assertMsg "position belongs to a different holder" (pos.holder == holder)
@@ -306,7 +371,7 @@ upsertPosition holder admin marketId auditObservers dYes dNo dCost optCid =
       create pos with
         yesShares = pos.yesShares + dYes
         noShares = pos.noShares + dNo
-        costBasisCC = pos.costBasisCC + dCost
+        costBasis = pos.costBasis + dCost
 
 -- ---------------------------------------------------------------------------
 -- LiquidityPosition: an LP's pro-rata claim on the pm-AMM reserve
@@ -318,12 +383,12 @@ template LiquidityPosition
     admin : Party
     marketId : Int
     lpTokens : Decimal
-    depositedCC : Decimal
+    deposited : Decimal     -- lifetime collateral put in (refund basis on void)
     auditObservers : [Party]
   where
     signatory provider
     observer admin, auditObservers
-    ensure lpTokens >= 0.0 && depositedCC >= 0.0
+    ensure lpTokens >= 0.0 && deposited >= 0.0
 
 -- ---------------------------------------------------------------------------
 -- OutcomeAttestation: a signed claim about what an allowlisted source reported
@@ -397,6 +462,8 @@ template PredictionMarket
     resolutionDescription : Text -- the terms a resolution is judged against; signed with every trade
     -- Presentation (image, description, category) lives off-ledger in the backend catalog: no choice
     -- reads it, no trader signs for it, and it must stay editable (truthoracle-backend docs/MARKETS.md).
+    collateral : InstrumentId   -- the instrument every amount on this market is in: shares cost <= 1 unit,
+                                -- a winning share pays 1 unit, fees and bonds are in it; fixed at creation
     createdAt : Int             -- epoch seconds
     expiresAt : Int             -- trading stops; resolution window opens
     gracePeriodSecs : Int       -- resolution must complete before expiresAt + grace
@@ -409,9 +476,9 @@ template PredictionMarket
     currentPrice : Decimal      -- cached pm-AMM YES price (virtual-reserve anchor)
     feeBps : Int                -- per-trade fee, basis points, on the collateral leg
     prizeFeeShareBps : Int      -- slice of each fee routed to the model prize pool
-    accumulatedFeesCC : Decimal -- LP fee pot
-    prizePoolCC : Decimal       -- model-marketplace prize pot
-    totalVolumeCC : Decimal
+    accumulatedFees : Decimal   -- LP fee pot
+    prizePool : Decimal         -- model-marketplace prize pot
+    totalVolume : Decimal       -- lifetime traded collateral
     status : MarketStatus
     outcome : Optional Outcome
     resolvedAt : Optional Int
@@ -432,15 +499,16 @@ template PredictionMarket
     -- Trading surface
     -- -----------------------------------------------------------------
 
-    -- Buy outcome shares with collateral debited from the buyer's in-app
-    -- wallet - a single wallet action, atomic with the share mint. Net
+    -- Buy outcome shares with `amount` of collateral debited from the buyer's
+    -- in-app wallet, which must hold the market's collateral - a single wallet
+    -- action, atomic with the share mint. Net
     -- collateral mints complete sets whose opposite leg is swapped into the
     -- pool; the buyer receives collateral/P-ish shares subject to price impact.
     choice Buy : (ContractId PredictionMarket, ContractId Position, ContractId UserWallet)
       with
         buyer : Party
         side : Outcome
-        collateralCC : Decimal
+        amount : Decimal            -- collateral spent, fee included
         minSharesOut : Decimal
         nowSeconds : Int
         existingPosition : Optional (ContractId Position)
@@ -451,16 +519,16 @@ template PredictionMarket
         assertMsg "trading has not started (liquidity period)" (nowSeconds >= tradingStartsAt this)
         assertMsg "market has expired" (nowSeconds < expiresAt)
         assertMsg "side must be Yes or No" (side /= VoidOutcome)
-        assertMsg "collateral must be positive" (collateralCC > 0.0)
+        assertMsg "amount must be positive" (amount > 0.0)
 
-        newWalletCid <- debitUserWallet admin buyer walletCid collateralCC "buy"
+        newWalletCid <- debitUserWallet admin buyer collateral walletCid amount "buy"
 
         let l = effLOf this nowSeconds
         assertMsg "no effective liquidity" (l > 0.0)
         let (xv, yv) = virtualReservesOf this nowSeconds
-            fee = collateralCC * feeFraction feeBps
+            fee = amount * feeFraction feeBps
             prizeCut = fee * feeFraction prizeFeeShareBps
-            net = collateralCC - fee
+            net = amount - fee
             -- Solver works on YES-orientation; mirror reserves for NO
             -- (the invariant is symmetric under x <-> y).
             sharesOut = if side == Yes
@@ -479,16 +547,16 @@ template PredictionMarket
         posCid <- upsertPosition buyer admin marketId auditObservers
           (if side == Yes then sharesOut else 0.0)
           (if side == No then sharesOut else 0.0)
-          collateralCC
+          amount
           existingPosition
 
         marketCid <- create this with
           reserveYes = newPhysYes
           reserveNo = newPhysNo
           currentPrice = newPrice
-          accumulatedFeesCC = accumulatedFeesCC + fee - prizeCut
-          prizePoolCC = prizePoolCC + prizeCut
-          totalVolumeCC = totalVolumeCC + collateralCC
+          accumulatedFees = accumulatedFees + fee - prizeCut
+          prizePool = prizePool + prizeCut
+          totalVolume = totalVolume + amount
 
         return (marketCid, posCid, newWalletCid)
 
@@ -500,7 +568,7 @@ template PredictionMarket
         seller : Party
         side : Outcome
         sharesIn : Decimal
-        minProceedsCC : Decimal
+        minProceeds : Decimal
         nowSeconds : Int
         positionCid : ContractId Position
         walletCid : ContractId UserWallet
@@ -527,7 +595,7 @@ template PredictionMarket
             fee = gross * feeFraction feeBps
             prizeCut = fee * feeFraction prizeFeeShareBps
             net = gross - fee
-        assertMsg "slippage: proceeds below minProceedsCC" (net >= minProceedsCC)
+        assertMsg "slippage: proceeds below minProceeds" (net >= minProceeds)
         assertMsg "trade too large for pool" (gross > 0.0)
 
         let diff = yv - xv
@@ -542,15 +610,15 @@ template PredictionMarket
           yesShares = if side == Yes then pos.yesShares - sharesIn else pos.yesShares
           noShares = if side == No then pos.noShares - sharesIn else pos.noShares
 
-        newWalletCid <- creditUserWallet admin seller walletCid net "sell"
+        newWalletCid <- creditUserWallet admin seller collateral walletCid net "sell"
 
         marketCid <- create this with
           reserveYes = newPhysYes
           reserveNo = newPhysNo
           currentPrice = newPrice
-          accumulatedFeesCC = accumulatedFeesCC + fee - prizeCut
-          prizePoolCC = prizePoolCC + prizeCut
-          totalVolumeCC = totalVolumeCC + gross
+          accumulatedFees = accumulatedFees + fee - prizeCut
+          prizePool = prizePool + prizeCut
+          totalVolume = totalVolume + gross
 
         return (marketCid, newPosCid, newWalletCid)
 
@@ -610,12 +678,12 @@ template PredictionMarket
           reserveYes = newPhysYes
           reserveNo = newPhysNo
           currentPrice = newPrice
-          totalVolumeCC = totalVolumeCC + sharesIn * fromPrice
+          totalVolume = totalVolume + sharesIn * fromPrice
 
         return (marketCid, newPosCid)
 
-    -- Mint complete sets: 1 CC -> 1 YES + 1 NO (no-arbitrage invariant).
-    -- The CC is debited from the user's in-app wallet atomically.
+    -- Mint complete sets: 1 unit of collateral -> 1 YES + 1 NO (no-arbitrage
+    -- invariant). The collateral is debited from the user's in-app wallet atomically.
     nonconsuming choice Split : (ContractId Position, ContractId UserWallet)
       with
         user : Party
@@ -628,11 +696,11 @@ template PredictionMarket
         assertMsg "market is not trading" (status == Trading)
         assertMsg "market has expired" (nowSeconds < expiresAt)
         assertMsg "amount must be positive" (amount > 0.0)
-        newWalletCid <- debitUserWallet admin user walletCid amount "split"
+        newWalletCid <- debitUserWallet admin user collateral walletCid amount "split"
         posCid <- upsertPosition user admin marketId auditObservers amount amount amount existingPosition
         return (posCid, newWalletCid)
 
-    -- Burn equal YES+NO pairs for 1 CC each, credited to the in-app wallet.
+    -- Burn equal YES+NO pairs for 1 unit of collateral each, credited to the in-app wallet.
     nonconsuming choice Merge : (ContractId Position, ContractId UserWallet)
       with
         user : Party
@@ -651,7 +719,7 @@ template PredictionMarket
         newPosCid <- create pos with
           yesShares = pos.yesShares - amount
           noShares = pos.noShares - amount
-        newWalletCid <- creditUserWallet admin user walletCid amount "merge"
+        newWalletCid <- creditUserWallet admin user collateral walletCid amount "merge"
         return (newPosCid, newWalletCid)
 
     -- -----------------------------------------------------------------
@@ -659,14 +727,14 @@ template PredictionMarket
     -- -----------------------------------------------------------------
 
     -- LP names a desired pool-value increase dV; the pool scales x, y and L
-    -- by (V + dV)/V so the price is untouched. Cost in CC = max(dx, dy)
-    -- (collateral that fully backs the minted inventory), debited from the
-    -- provider's in-app wallet; maxCostCC bounds quote drift.
+    -- by (V + dV)/V so the price is untouched. Cost = max(dx, dy) units of
+    -- collateral (fully backing the minted inventory), debited from the
+    -- provider's in-app wallet; maxCost bounds quote drift.
     choice ProvideLiquidity : (ContractId PredictionMarket, ContractId LiquidityPosition, ContractId UserWallet)
       with
         provider : Party
-        valueIncreaseCC : Decimal
-        maxCostCC : Decimal
+        valueIncrease : Decimal
+        maxCost : Decimal
         nowSeconds : Int
         existingLpPosition : Optional (ContractId LiquidityPosition)
         walletCid : ContractId UserWallet
@@ -674,26 +742,26 @@ template PredictionMarket
       do
         assertMsg "market is not trading" (status == Trading)
         assertMsg "market has expired" (nowSeconds < expiresAt)
-        assertMsg "value increase must be positive" (valueIncreaseCC > 0.0)
+        assertMsg "value increase must be positive" (valueIncrease > 0.0)
 
         let l = effLOf this nowSeconds
         assertMsg "no effective liquidity" (l > 0.0)
         let v = poolValue currentPrice l
-            ratio = valueIncreaseCC / v
+            ratio = valueIncrease / v
             (xv, yv) = virtualReservesOf this nowSeconds
             dX = xv * ratio
             dY = yv * ratio
-            costCC = max dX dY
+            cost = max dX dY
             lpMinted = lpTokenSupply * ratio
-        assertMsg "cost exceeds maxCostCC" (costCC <= maxCostCC)
+        assertMsg "cost exceeds maxCost" (cost <= maxCost)
 
-        newWalletCid <- debitUserWallet admin provider walletCid costCC "liquidity-provide"
+        newWalletCid <- debitUserWallet admin provider collateral walletCid cost "liquidity-provide"
 
         lpCid <- case existingLpPosition of
           None -> create LiquidityPosition with
             provider, admin, marketId, auditObservers
             lpTokens = lpMinted
-            depositedCC = costCC
+            deposited = cost
           Some cid -> do
             lp <- fetch cid
             assertMsg "lp position belongs to a different provider" (lp.provider == provider)
@@ -701,7 +769,7 @@ template PredictionMarket
             archive cid
             create lp with
               lpTokens = lp.lpTokens + lpMinted
-              depositedCC = lp.depositedCC + costCC
+              deposited = lp.deposited + cost
 
         marketCid <- create this with
           reserveYes = reserveYes + dX
@@ -713,7 +781,7 @@ template PredictionMarket
 
     -- Withdraw liquidity. Dynamic pools lock LPs until resolution/void
     -- (uniform-LVR design); static pools may exit early receiving shares.
-    -- CC proceeds are credited to the provider's in-app wallet.
+    -- Collateral proceeds are credited to the provider's in-app wallet.
     choice WithdrawLiquidity : (ContractId PredictionMarket, Optional (ContractId LiquidityPosition), ContractId UserWallet)
       with
         provider : Party
@@ -732,16 +800,16 @@ template PredictionMarket
         assertMsg "empty pool" (lpTokenSupply > 0.0)
 
         let share = lpTokensToBurn / lpTokenSupply
-            feeOut = accumulatedFeesCC * share
+            feeOut = accumulatedFees * share
             remainingLp = lp.lpTokens - lpTokensToBurn
-            refundBasis = lp.depositedCC * (lpTokensToBurn / lp.lpTokens)
+            refundBasis = lp.deposited * (lpTokensToBurn / lp.lpTokens)
 
         newLpCid <- do
           archive lpPositionCid
           if remainingLp > 0.0
             then Some <$> create lp with
                    lpTokens = remainingLp
-                   depositedCC = lp.depositedCC - refundBasis
+                   deposited = lp.deposited - refundBasis
             else return None
 
         case status of
@@ -751,35 +819,35 @@ template PredictionMarket
                   Some No -> reserveNo
                   _ -> 0.0
                 payout = winning * share + feeOut
-            newWalletCid <- creditUserWallet admin provider walletCid payout "liquidity"
+            newWalletCid <- creditUserWallet admin provider collateral walletCid payout "liquidity"
             marketCid <- create this with
               reserveYes = reserveYes * (1.0 - share)
               reserveNo = reserveNo * (1.0 - share)
-              accumulatedFeesCC = accumulatedFeesCC - feeOut
+              accumulatedFees = accumulatedFees - feeOut
               lpTokenSupply = lpTokenSupply - lpTokensToBurn
             return (marketCid, newLpCid, newWalletCid)
           Voided -> do
-            newWalletCid <- creditUserWallet admin provider walletCid (refundBasis + feeOut) "liquidity"
+            newWalletCid <- creditUserWallet admin provider collateral walletCid (refundBasis + feeOut) "liquidity"
             marketCid <- create this with
               reserveYes = reserveYes * (1.0 - share)
               reserveNo = reserveNo * (1.0 - share)
-              accumulatedFeesCC = accumulatedFeesCC - feeOut
+              accumulatedFees = accumulatedFees - feeOut
               lpTokenSupply = lpTokenSupply - lpTokensToBurn
             return (marketCid, newLpCid, newWalletCid)
           Trading -> do
             assertMsg "dynamic-pool LP is locked until resolution" (not isDynamic)
             -- Early static exit: proportional physical inventory into the
-            -- provider's Position, fee share as CC.
+            -- provider's Position, fee share as collateral.
             let sharesYesOut = reserveYes * share
                 sharesNoOut = reserveNo * share
             _ <- upsertPosition provider admin marketId auditObservers
                    sharesYesOut sharesNoOut 0.0 existingPosition
-            newWalletCid <- creditUserWallet admin provider walletCid feeOut "liquidity"
+            newWalletCid <- creditUserWallet admin provider collateral walletCid feeOut "liquidity"
             marketCid <- create this with
               reserveYes = reserveYes - sharesYesOut
               reserveNo = reserveNo - sharesNoOut
               liquidityL = liquidityL * (1.0 - share)
-              accumulatedFeesCC = accumulatedFeesCC - feeOut
+              accumulatedFees = accumulatedFees - feeOut
               lpTokenSupply = lpTokenSupply - lpTokensToBurn
             return (marketCid, newLpCid, newWalletCid)
           Proposed -> abort "cannot withdraw while a proposal is pending"
@@ -845,7 +913,7 @@ template PredictionMarket
         let resolved = (\a -> a.outcome) (head atts)
         assertMsg "attestations disagree" (all (\a -> a.outcome == resolved) atts)
 
-        settleBonds admin marketId proposal resolved nowSeconds
+        settleBonds admin marketId collateral auditObservers proposal resolved nowSeconds
 
         create this with
           status = if resolved == VoidOutcome then Voided else Resolved
@@ -867,14 +935,14 @@ template PredictionMarket
         assertMsg "market is not awaiting a proposal" (status == Trading)
         assertMsg "market not yet expired" (nowSeconds >= expiresAt)
         assertMsg "resolution window elapsed" (nowSeconds <= expiresAt + gracePeriodSecs)
-        newWalletCid <- debitUserWallet admin proposer walletCid policy.bondCC "bond"
+        newWalletCid <- debitUserWallet admin proposer collateral walletCid policy.bond "bond"
         marketCid <- create this with
           status = Proposed
           proposal = Some ProposalInfo with
             proposer
             proposedOutcome
             proposedAt = nowSeconds
-            bondCC = policy.bondCC
+            bond = policy.bond
             challenger = None
             challengerOutcome = None
         return (marketCid, newWalletCid)
@@ -899,7 +967,7 @@ template PredictionMarket
               (nowSeconds <= p.proposedAt + policy.challengeSecs)
             assertMsg "challenge must assert a different outcome"
               (challengerOutcome /= p.proposedOutcome)
-            newWalletCid <- debitUserWallet admin challenger walletCid p.bondCC "bond"
+            newWalletCid <- debitUserWallet admin challenger collateral walletCid p.bond "bond"
             marketCid <- create this with
               proposal = Some p with
                 challenger = Some challenger
@@ -921,13 +989,8 @@ template PredictionMarket
             assertMsg "proposal was challenged - escalate via Resolve" (isNone p.challenger)
             assertMsg "challenge window still open"
               (nowSeconds > p.proposedAt + policy.challengeSecs)
-            when (p.bondCC > 0.0) $ do
-              _ <- create PendingPayout with
-                admin, user = p.proposer, marketId
-                amountCC = p.bondCC
-                reason = "bond"
-                createdAt = nowSeconds
-              return ()
+            when (p.bond > 0.0) $
+              queuePayout admin p.proposer marketId collateral auditObservers p.bond "bond" nowSeconds
             create this with
               status = if p.proposedOutcome == VoidOutcome then Voided else Resolved
               outcome = Some p.proposedOutcome
@@ -942,7 +1005,7 @@ template PredictionMarket
       do
         assertMsg "market already settled" (status == Trading || status == Proposed)
         assertMsg "grace period not yet elapsed" (nowSeconds > expiresAt + gracePeriodSecs)
-        settleBonds admin marketId proposal VoidOutcome nowSeconds
+        settleBonds admin marketId collateral auditObservers proposal VoidOutcome nowSeconds
         create this with
           status = Voided
           outcome = Some VoidOutcome
@@ -953,7 +1016,7 @@ template PredictionMarket
     -- Redemption
     -- -----------------------------------------------------------------
 
-    -- After Resolved: 1 CC per winning share, 0 per losing share.
+    -- After Resolved: 1 unit of collateral per winning share, 0 per losing share.
     -- After Voided: cost basis refunded. Archives the position; the payout
     -- is credited to the holder's in-app wallet.
     nonconsuming choice RedeemPosition : ContractId UserWallet
@@ -973,11 +1036,11 @@ template PredictionMarket
               (Resolved, Some No) -> pos.noShares
               -- Void refunds the cost basis, bounded by the shares still
               -- held (earlier sells/merges were already paid out).
-              (Voided, _) -> min pos.costBasisCC (max pos.yesShares pos.noShares)
+              (Voided, _) -> min pos.costBasis (max pos.yesShares pos.noShares)
               _ -> 0.0
         assertMsg "nothing to redeem" (payout > 0.0)
         archive positionCid
-        creditUserWallet admin holder walletCid payout
+        creditUserWallet admin holder collateral walletCid payout
           (if status == Voided then "void-refund" else "resolve")
 
     -- -----------------------------------------------------------------
@@ -1023,15 +1086,12 @@ template PredictionMarket
             eligible = filter beatMarket forecasts
             weight f = 1.0 - (f.probabilityYes - o) * (f.probabilityYes - o)
             totalW = sum (map weight eligible)
-        if totalW <= 0.0 || prizePoolCC <= 0.0
+        if totalW <= 0.0 || prizePool <= 0.0
           then create this  -- nothing to distribute; keep the pool
           else do
-            _ <- mapA (\f -> create PendingPayout with
-                   admin, user = f.author, marketId
-                   amountCC = prizePoolCC * weight f / totalW
-                   reason = "model-prize"
-                   createdAt = nowSeconds) eligible
-            create this with prizePoolCC = 0.0
+            _ <- mapA (\f -> queuePayout admin f.author marketId collateral auditObservers
+                   (prizePool * weight f / totalW) "model-prize" nowSeconds) eligible
+            create this with prizePool = 0.0
 
     choice ArchiveMarket : ()
       controller admin
@@ -1039,50 +1099,25 @@ template PredictionMarket
 
 -- Bond settlement for a challenged/voided T3 proposal: the party whose
 -- outcome matches the authoritative result receives both bonds; on Void or
--- no-match, both bonds are refunded.
-settleBonds : Party -> Int -> Optional ProposalInfo -> Outcome -> Int -> Update ()
-settleBonds admin marketId optProposal resolved nowSeconds =
+-- no-match, both bonds are refunded. Payouts are queued in the market's
+-- collateral, visible to its audit observers.
+settleBonds : Party -> Int -> InstrumentId -> [Party] -> Optional ProposalInfo -> Outcome -> Int -> Update ()
+settleBonds admin marketId collateral auditObservers optProposal resolved nowSeconds =
   case optProposal of
     None -> return ()
-    Some p | p.bondCC <= 0.0 -> return ()
+    Some p | p.bond <= 0.0 -> return ()
     Some p ->
-      case (p.challenger, p.challengerOutcome) of
+      let pay user amount = queuePayout admin user marketId collateral auditObservers amount "bond" nowSeconds
+      in case (p.challenger, p.challengerOutcome) of
         (Some ch, Some chOut)
-          | p.proposedOutcome == resolved && chOut /= resolved -> do
-              _ <- create PendingPayout with
-                admin, user = p.proposer, marketId
-                amountCC = p.bondCC * 2.0
-                reason = "bond"
-                createdAt = nowSeconds
-              return ()
-          | chOut == resolved && p.proposedOutcome /= resolved -> do
-              _ <- create PendingPayout with
-                admin, user = ch, marketId
-                amountCC = p.bondCC * 2.0
-                reason = "bond"
-                createdAt = nowSeconds
-              return ()
+          | p.proposedOutcome == resolved && chOut /= resolved -> pay p.proposer (p.bond * 2.0)
+          | chOut == resolved && p.proposedOutcome /= resolved -> pay ch (p.bond * 2.0)
           | otherwise -> do
-              _ <- create PendingPayout with
-                admin, user = p.proposer, marketId
-                amountCC = p.bondCC
-                reason = "bond"
-                createdAt = nowSeconds
-              _ <- create PendingPayout with
-                admin, user = ch, marketId
-                amountCC = p.bondCC
-                reason = "bond"
-                createdAt = nowSeconds
-              return ()
-        _ -> do
-          -- Unchallenged proposal superseded by authoritative resolution or
-          -- void: refund the proposer's bond.
-          _ <- create PendingPayout with
-            admin, user = p.proposer, marketId
-            amountCC = p.bondCC
-            reason = "bond"
-            createdAt = nowSeconds
-          return ()
+              pay p.proposer p.bond
+              pay ch p.bond
+        -- Unchallenged proposal superseded by authoritative resolution or
+        -- void: refund the proposer's bond.
+        _ -> pay p.proposer p.bond
 
 -- ---------------------------------------------------------------------------
 -- Market counter & factory (single global instance, admin-only)
@@ -1102,10 +1137,11 @@ template MarketCounter
         newCid <- create this with value = newValue
         return (newCid, newValue)
 
-    -- Creates a Market seeded at initialProbability with pool value
-    -- initialValueCC: L0 = V / pdf(icdf P); reserves are the closed-form
-    -- optimal (x*, y*). The admin's collateral cost is max(x*, y*) CC
-    -- (transferred off-ledger), seeding the admin's LiquidityPosition.
+    -- Creates a Market denominated in `collateral`, seeded at initialProbability
+    -- with pool value initialValue (in that instrument): L0 = V / pdf(icdf P);
+    -- reserves are the closed-form optimal (x*, y*). The admin's cost is
+    -- max(x*, y*) units of collateral (funded from the treasury's own holdings,
+    -- off-ledger), seeding the admin's LiquidityPosition.
     choice CreateMarket : (ContractId MarketCounter, ContractId PredictionMarket, ContractId LiquidityPosition)
       with
         ticker : Text
@@ -1114,13 +1150,14 @@ template MarketCounter
         yesSubTitle : Text
         noSubTitle : Text
         resolutionDescription : Text
+        collateral : InstrumentId
         createdAt : Int
         expiresAt : Int
         gracePeriodSecs : Int
         isDynamic : Bool
         liquidityPeriodSecs : Int
         initialProbability : Decimal
-        initialValueCC : Decimal
+        initialValue : Decimal
         feeBps : Int
         prizeFeeShareBps : Int
         policy : ResolutionPolicy
@@ -1131,7 +1168,7 @@ template MarketCounter
           (ticker /= "" && eventTicker /= "" && yesSubTitle /= "" && noSubTitle /= "")
         assertMsg "probability must be within [0.01, 0.99]"
           (initialProbability >= 0.01 && initialProbability <= 0.99)
-        assertMsg "initial pool value must be positive" (initialValueCC > 0.0)
+        assertMsg "initial pool value must be positive" (initialValue > 0.0)
         assertMsg "expiry must be after creation" (expiresAt > createdAt)
         assertMsg "liquidity period must be non-negative" (liquidityPeriodSecs >= 0)
         assertMsg "expiry must be after the liquidity period"
@@ -1144,12 +1181,12 @@ template MarketCounter
 
         let newValue = value + 1
             marketId = newValue
-            l0 = liquidityFromValue initialValueCC initialProbability
+            l0 = liquidityFromValue initialValue initialProbability
             (x0, y0) = optimalReserves initialProbability l0
 
         newCounterCid <- create this with value = newValue
         marketCid <- create PredictionMarket with
-          admin, marketId, question, resolutionDescription
+          admin, marketId, question, resolutionDescription, collateral
           createdAt, expiresAt, gracePeriodSecs, isDynamic, liquidityPeriodSecs
           reserveYes = x0
           reserveNo = y0
@@ -1157,9 +1194,9 @@ template MarketCounter
           lpTokenSupply = l0
           currentPrice = initialProbability
           feeBps, prizeFeeShareBps
-          accumulatedFeesCC = 0.0
-          prizePoolCC = 0.0
-          totalVolumeCC = 0.0
+          accumulatedFees = 0.0
+          prizePool = 0.0
+          totalVolume = 0.0
           status = Trading
           outcome = None
           resolvedAt = None
@@ -1169,5 +1206,5 @@ template MarketCounter
         lpCid <- create LiquidityPosition with
           provider = admin, admin, marketId, auditObservers
           lpTokens = l0
-          depositedCC = max x0 y0
+          deposited = max x0 y0
         return (newCounterCid, marketCid, lpCid)

@@ -21,7 +21,8 @@
  * Usage:
  *   npm run create:contract
  *   npm run create:contract -- market-counter
- *   npm run create:contract -- user-wallet <ownerPartyId> [initialCC] [txRef]
+ *   npm run create:contract -- user-wallet <ownerPartyId> [initialBalance] [txRef]
+ *     (the wallet's instrument comes from COLLATERAL_INSTRUMENT_ADMIN / COLLATERAL_INSTRUMENT_ID)
  */
 
 import dotenv from "dotenv";
@@ -200,13 +201,14 @@ async function createMarketCounter() {
 }
 
 /**
- * Create a UserWallet for `owner` (in-app balance, custodied by the admin).
- * With initialCC > 0 the wallet is seeded as an already-credited deposit —
- * equivalent to create(balance 0) + Deposit, since the admin is sole signatory.
- * Run this AFTER the owner's real CC transfer landed in the treasury; txRef
- * records that transfer for audit.
+ * Create a UserWallet for `owner` in the collateral instrument of `.env` (in-app balance,
+ * custodied by the admin; one wallet per (owner, instrument) since v17). With initialBalance > 0
+ * the wallet is seeded as an already-credited deposit — equivalent to create(balance 0) +
+ * Deposit, since the admin is sole signatory. Run this AFTER the owner's real transfer of that
+ * instrument landed in the treasury; txRef records that transfer for audit and seeds
+ * `creditRefs`, so a later Deposit with the same ref is refused on-ledger.
  */
-async function createUserWallet(owner: string, initialCC: number, txRef: string) {
+async function createUserWallet(owner: string, initialBalance: number, txRef: string) {
   const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.join(scriptsDir, "..");
   const rootEnv = path.join(repoRoot, ".env");
@@ -218,20 +220,27 @@ async function createUserWallet(owner: string, initialCC: number, txRef: string)
   const admin = mustEnv(viteEnv("VITE_ENTERPRISE_WALLET_PARTY_ID"), "VITE_ENTERPRISE_WALLET_PARTY_ID");
   if (!owner)
     throw new Error(
-      "user-wallet requires <ownerPartyId>: npm run create:contract -- user-wallet <ownerPartyId> [initialCC] [txRef]",
+      "user-wallet requires <ownerPartyId>: npm run create:contract -- user-wallet <ownerPartyId> [initialBalance] [txRef]",
     );
-  if (!(initialCC >= 0)) throw new Error(`initialCC must be a non-negative number, got: ${initialCC}`);
+  if (!(initialBalance >= 0)) throw new Error(`initialBalance must be a non-negative number, got: ${initialBalance}`);
+  // The instrument the wallet holds is immutable, so it is read from the same variables
+  // create:market uses for a market's collateral (DevNet stand-in: the DSO party / Amulet).
+  const instrument = {
+    admin: mustEnv(viteEnv("COLLATERAL_INSTRUMENT_ADMIN"), "COLLATERAL_INSTRUMENT_ADMIN"),
+    id: mustEnv(viteEnv("COLLATERAL_INSTRUMENT_ID"), "COLLATERAL_INSTRUMENT_ID"),
+  };
 
   const TEMPLATE_ID = `${PACKAGE_ID}:Truthoracle:UserWallet`;
   const commandId = `cmd-${Date.now()}-${randomUUID()}`;
   const bearer = await fetchWalletBearerToken();
-  const amount = initialCC.toFixed(10); // Daml Decimal as string
+  const amount = initialBalance.toFixed(10); // Daml Decimal as string
 
   console.log("=== TruthOracle: create UserWallet (via wallet /api/v1/external/submit) ===");
   console.log(`WALLET=${WALLET_URL}`);
   console.log(`TEMPLATE_ID=${TEMPLATE_ID}`);
   console.log(`owner=${owner}`);
-  console.log(`initialCC=${amount}${txRef ? ` (txRef=${txRef})` : ""}`);
+  console.log(`instrument=${instrument.id} (admin ${instrument.admin})`);
+  console.log(`initialBalance=${amount}${txRef ? ` (txRef=${txRef})` : ""}`);
 
   const submitBody: Json = {
     partyId: admin,
@@ -244,11 +253,15 @@ async function createUserWallet(owner: string, initialCC: number, txRef: string)
           createArguments: {
             admin,
             owner,
-            balanceCC: amount,
-            depositedCC: amount,
-            withdrawnCC: "0.0000000000",
-            // v14: mandatory list of credited txRefs (newest first); Deposit refuses a repeat.
-            depositRefs: txRef ? [txRef] : [],
+            instrument,
+            balance: amount,
+            deposited: amount,
+            withdrawn: "0.0000000000",
+            // Refs already applied (deposits and grants), newest first; Deposit and Grant refuse a repeat.
+            creditRefs: txRef ? [txRef] : [],
+            // Compliance observers belong on wallets the backend creates (AUDIT_OBSERVER_PARTIES);
+            // this bootstrap helper creates none.
+            auditObservers: [],
           },
         },
       },
@@ -261,7 +274,7 @@ async function createUserWallet(owner: string, initialCC: number, txRef: string)
     body: JSON.stringify(submitBody),
   });
   if (!submit.ok) throw new Error(`wallet external/submit failed (${submit.status})`);
-  console.log(`\nDone. UserWallet for ${owner} submitted (balance ${amount} CC).`);
+  console.log(`\nDone. UserWallet for ${owner} submitted (balance ${amount} ${instrument.id}).`);
 }
 
 export async function main() {
@@ -273,12 +286,13 @@ export async function main() {
         "Usage:",
         "  npm run create:contract",
         "  npm run create:contract -- market-counter",
-        "  npm run create:contract -- user-wallet <ownerPartyId> [initialCC] [txRef]",
+        "  npm run create:contract -- user-wallet <ownerPartyId> [initialBalance] [txRef]",
         "",
         "Required .env:",
         "  VITE_TRUTHORACLE_PACKAGE_ID — DAR package id",
         "  VITE_ENTERPRISE_WALLET_PARTY_ID — admin party id (must be registered with the wallet)",
         "  KEYCLOAK_URL / KEYCLOAK_CLIENT_ID / KEYCLOAK_CLIENT_SECRET — wallet Bearer token (AUTH_TYPE=keycloak)",
+        "  COLLATERAL_INSTRUMENT_ADMIN / COLLATERAL_INSTRUMENT_ID — the instrument a user-wallet holds (create:market uses the same)",
         "",
         "Optional:",
         "  VITE_ENTERPRISE_WALLET_URL — wallet base URL (default http://localhost:8080)",

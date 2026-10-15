@@ -19,7 +19,7 @@
  *   --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,
  *                               KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID
  *   --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)
- *   Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')
+ *   Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default: the `name:` in daml/daml.yaml — the package this checkout builds)
  */
 
 import dotenv from "dotenv";
@@ -35,12 +35,11 @@ const TEMPLATES = [
   { module: "Truthoracle", entity: "PredictionMarket" },
   { module: "Truthoracle", entity: "Position" },
   { module: "Truthoracle", entity: "LiquidityPosition" },
+  { module: "Truthoracle", entity: "UserWallet" },
   { module: "Truthoracle", entity: "PendingPayout" },
   { module: "Truthoracle", entity: "OutcomeAttestation" },
   { module: "Truthoracle", entity: "ModelForecast" },
   { module: "Marketplace", entity: "PredictionModel" },
-  { module: "Incentives", entity: "UserRewardsSummary" },
-  { module: "Incentives", entity: "ClaimedReward" },
 ];
 
 function viteEnv(name: string) {
@@ -55,6 +54,21 @@ function mustEnv(value: string, name: string) {
 
 function stripTrailingSlash(url: string) {
   return url.replace(/\/$/, "");
+}
+
+/**
+ * `name:` / `version:` of daml/daml.yaml — the package this checkout builds, matched line by
+ * line the way CI reads them (.github/workflows/ci.yml), so no script carries a package name or
+ * DAR path that outlives the next lineage bump.
+ */
+function damlPackage(repoRoot: string): { name: string; version: string } {
+  const text = fs.readFileSync(path.join(repoRoot, "daml", "daml.yaml"), "utf8");
+  const field = (key: string) => {
+    const m = text.match(new RegExp(`^${key}:[ \\t]*"?([^"\\s]+)"?`, "m"));
+    if (!m) throw new Error(`daml/daml.yaml has no \`${key}:\` field`);
+    return m[1];
+  };
+  return { name: field("name"), version: field("version") };
 }
 
 type Network = "devnet" | "zkpc";
@@ -186,9 +200,12 @@ function describe(row: Row): string {
     case "Position":
       return `marketId=${p.marketId} holder=${String(p.holder ?? "").slice(0, 24)}… yes=${p.yesShares} no=${p.noShares}`;
     case "LiquidityPosition":
-      return `marketId=${p.marketId} lpTokens=${p.lpTokens} deposited=${p.depositedCC}`;
+      return `marketId=${p.marketId} lpTokens=${p.lpTokens} deposited=${p.deposited}`;
+    case "UserWallet":
+      // One wallet per (owner, instrument) since v17: the instrument says what the balance is in.
+      return `owner=${String(p.owner ?? "").slice(0, 24)}… instrument=${p.instrument?.id ?? "?"} balance=${p.balance} deposited=${p.deposited} withdrawn=${p.withdrawn} creditRefs=${Array.isArray(p.creditRefs) ? p.creditRefs.length : "?"}`;
     case "PendingPayout":
-      return `marketId=${p.marketId} amount=${p.amountCC ?? p.amount}`;
+      return `marketId=${p.marketId} amount=${p.amount} ${p.instrument?.id ?? "?"}`;
     case "OutcomeAttestation":
       return `marketId=${p.marketId} attester=${String(p.attester ?? "").slice(0, 24)}…`;
     case "ModelForecast":
@@ -218,7 +235,7 @@ async function main() {
         "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
         "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
         "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
-        "  VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
+        "  VITE_TRUTHORACLE_PACKAGE_NAME (default: the `name:` in daml/daml.yaml — the package this checkout builds)",
       ].join("\n"),
     );
     return;
@@ -243,8 +260,9 @@ async function main() {
   const LEDGER_API = net.ledgerApi;
   const PARTY = partyOverride || adminParty();
   // The active-contracts template filter takes a package-*name* reference
-  // ("#truthoracle-v16:Module:Entity"), never a package id.
-  const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || "truthoracle";
+  // ("#truthoracle-v17:Module:Entity"), never a package id. Unset, it is the package this
+  // checkout builds — a literal default went stale with every lineage bump and queried nothing.
+  const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || damlPackage(repoRoot).name;
 
   const onlyEntity = positional[0];
   const targets = onlyEntity ? TEMPLATES.filter((t) => t.entity.toLowerCase() === onlyEntity.toLowerCase()) : TEMPLATES;
@@ -271,8 +289,9 @@ async function main() {
   const rawDump: Record<string, unknown> = {};
 
   for (const t of targets) {
+    // `eventFormat` only: Canton 3.6 refuses the legacy top-level `verbose` / `filter` pair
+    // with DEPRECATED_API_DISABLED.
     const body = JSON.stringify({
-      verbose: false,
       activeAtOffset,
       eventFormat: {
         filtersByParty: {

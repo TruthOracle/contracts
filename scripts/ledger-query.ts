@@ -19,6 +19,21 @@ function stripTrailingSlash(url: string) {
   return url.replace(/\/$/, "");
 }
 
+/**
+ * `name:` / `version:` of daml/daml.yaml — the package this checkout builds, matched line by
+ * line the way CI reads them (.github/workflows/ci.yml), so no script carries a package name or
+ * DAR path that outlives the next lineage bump.
+ */
+function damlPackage(repoRoot: string): { name: string; version: string } {
+  const text = fs.readFileSync(path.join(repoRoot, "daml", "daml.yaml"), "utf8");
+  const field = (key: string) => {
+    const m = text.match(new RegExp(`^${key}:[ \\t]*"?([^"\\s]+)"?`, "m"));
+    if (!m) throw new Error(`daml/daml.yaml has no \`${key}:\` field`);
+    return m[1];
+  };
+  return { name: field("name"), version: field("version") };
+}
+
 type Network = "devnet" | "zkpc";
 
 function parseNetwork(argv: string[], fallback: Network): Network {
@@ -105,7 +120,7 @@ async function main() {
         "  --network devnet (default): VITE_CANTON_PARTICIPANT_URL, VITE_KEYCLOAK_URL/REALM,",
         "                              KEYCLOAK_CLIENT_ID/SECRET, VITE_ENTERPRISE_WALLET_PARTY_ID",
         "  --network zkpc:             ZKPC_LEDGER_API_URL, ZKPC_KEYCLOAK_* (party: VITE_ENTERPRISE_WALLET_PARTY_ID)",
-        "  Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default 'truthoracle')",
+        "  Optional: VITE_TRUTHORACLE_PACKAGE_NAME (default: the `name:` in daml/daml.yaml — the package this checkout builds)",
       ].join("\n"),
     );
     return;
@@ -121,8 +136,9 @@ async function main() {
   const LEDGER_API = net.ledgerApi;
   const ADMIN_PARTY = adminParty();
   // The active-contracts template filter expects a package-name reference ("#name:Module:Entity"),
-  // not a package id, so we use the daml.yaml `name:` field.
-  const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || "truthoracle";
+  // not a package id. Unset, it is the `name:` of daml/daml.yaml — the package this checkout
+  // builds; a literal default went stale with every lineage bump and silently queried nothing.
+  const PACKAGE_NAME = viteEnv("VITE_TRUTHORACLE_PACKAGE_NAME") || damlPackage(repoRoot).name;
 
   // Templates we care about. `null` entityName means "any template in this module" (wildcard via
   // multiple TemplateFilter entries — the JSON Ledger API doesn't accept a single module-level filter).
@@ -130,7 +146,6 @@ async function main() {
     { module: "Truthoracle", entity: "MarketCounter" },
     { module: "Truthoracle", entity: "PredictionMarket" },
     { module: "Truthoracle", entity: "Position" },
-    { module: "Incentives", entity: "UserRewardsSummary" },
   ];
 
   const rawArgv = process.argv.slice(2);
@@ -154,8 +169,9 @@ async function main() {
   const active = await fetchJson(`${LEDGER_API}/v2/state/active-contracts`, {
     method: "POST",
     headers,
+    // `eventFormat` only: Canton 3.6 refuses the legacy top-level `verbose` / `filter` pair
+    // with DEPRECATED_API_DISABLED.
     body: JSON.stringify({
-      verbose: false,
       activeAtOffset,
       eventFormat: {
         filtersByParty: {

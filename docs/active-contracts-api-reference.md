@@ -26,10 +26,10 @@ Content-Type: `application/json`.
 |-------|------|----------|-------------|
 | `activeAtOffset` | integer (int64) | **Yes** | Snapshot offset. Must be ≤ ledger end and ≥ last pruning offset. Use `0` for ledger begin (returns empty set). |
 | `eventFormat` | `EventFormat` | No* | Format of contract entries in the response (ACS_DELTA shape). Use this **or** legacy `filter`/`verbose`, not both. |
-| `filter` | `TransactionFilter` | No | Deprecated (removed in 3.5.0). If set, `eventFormat` must be unset. |
-| `verbose` | boolean | No | Deprecated. If set, `eventFormat` must be unset. |
+| `filter` | `TransactionFilter` | No | Deprecated; Canton 3.6 refuses it with `DEPRECATED_API_DISABLED`. If set, `eventFormat` must be unset. |
+| `verbose` | boolean | No | Deprecated (same fate as `filter` in 3.6). If set, `eventFormat` must be unset. |
 
-\* If neither `eventFormat` nor legacy `filter` is set, the API defaults from `filter`/`verbose`; for new code, prefer `eventFormat`.
+\* Always send `eventFormat`: the legacy pair is disabled on the Canton 3.6 participants we deploy to, and every script in this repository uses `eventFormat`.
 
 ### `EventFormat`
 
