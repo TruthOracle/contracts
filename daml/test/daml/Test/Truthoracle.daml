@@ -1,5 +1,7 @@
 -- Daml Script test suite for the TruthOracle dynamic pm-AMM, the tiered
--- resolution model (T0-T3), and the in-app UserWallet collateral rail.
+-- resolution model (T0-T3), and the in-app UserWallet collateral rail. Every
+-- market here is denominated in cBYN; TRO (the rewards token) exists to show
+-- that a wallet in another instrument is refused wherever money moves.
 module Test.Truthoracle where
 
 import DA.Assert ((===))
@@ -30,65 +32,94 @@ defaultPolicy = ResolutionPolicy with
   reporters = []
   quorum = 0
   challengeSecs = 0
-  bondCC = 0.0
+  bond = 0.0
 
-setup : Script (Party, Party, Party)
+-- Parties and instruments shared by every scenario. cBYN's admin is the
+-- transfer agent (Cantor8's registry party for the token); TRO's is its issuer.
+data Env = Env with
+  admin : Party        -- operator and treasury
+  alice : Party
+  bob : Party
+  regulator : Party    -- audit observer; never a signatory or a controller
+  cbyn : InstrumentId  -- the collateral of every market in this suite
+  tro : InstrumentId   -- the rewards instrument; never a market collateral here
+
+setup : Script Env
 setup = do
   admin <- allocateParty "Admin"
   alice <- allocateParty "Alice"
   bob <- allocateParty "Bob"
-  return (admin, alice, bob)
+  regulator <- allocateParty "Regulator"
+  transferAgent <- allocateParty "CbynTransferAgent"
+  troIssuer <- allocateParty "TroIssuer"
+  return Env with
+    admin, alice, bob, regulator
+    cbyn = InstrumentId with admin = transferAgent; id = "cBYN"
+    tro = InstrumentId with admin = troIssuer; id = "TRO"
 
 createCounter : Party -> Script (ContractId MarketCounter)
 createCounter admin =
   submit admin do
     createCmd MarketCounter with admin; value = 0
 
--- Create a user's in-app wallet and credit an initial external deposit.
-mkWallet : Party -> Party -> Decimal -> Script (ContractId UserWallet)
-mkWallet admin owner amount = do
+-- Create a user's in-app wallet for one instrument, visible to the given audit
+-- observers, and credit an initial external deposit.
+mkWalletObserved : Party -> InstrumentId -> [Party] -> Party -> Decimal -> Script (ContractId UserWallet)
+mkWalletObserved admin instrument auditObservers owner amount = do
   wCid <- submit admin do
     createCmd UserWallet with
-      admin, owner
-      balanceCC = 0.0
-      depositedCC = 0.0
-      withdrawnCC = 0.0
-      depositRefs = []
+      admin, owner, instrument, auditObservers
+      balance = 0.0
+      deposited = 0.0
+      withdrawn = 0.0
+      creditRefs = []
   if amount > 0.0
     then submit admin do
-      exerciseCmd wCid Deposit with amountCC = amount, txRef = "0xdeposit"
+      exerciseCmd wCid Deposit with amount, txRef = "0xdeposit"
     else return wCid
 
-walletBalance : Party -> ContractId UserWallet -> Script Decimal
-walletBalance p cid = do
+mkWallet : Party -> InstrumentId -> Party -> Decimal -> Script (ContractId UserWallet)
+mkWallet admin instrument = mkWalletObserved admin instrument []
+
+fetchWallet : Party -> ContractId UserWallet -> Script UserWallet
+fetchWallet p cid = do
   wOpt <- queryContractId p cid
   case wOpt of
     None -> abort "expected wallet visible"
-    Some w -> return w.balanceCC
+    Some w -> return w
 
-mkMarket
-  : Party -> ContractId MarketCounter -> ResolutionPolicy -> Bool -> Decimal -> Decimal
+walletBalance : Party -> ContractId UserWallet -> Script Decimal
+walletBalance p cid = (.balance) <$> fetchWallet p cid
+
+mkMarketObserved
+  : Party -> InstrumentId -> [Party] -> ContractId MarketCounter -> ResolutionPolicy -> Bool -> Decimal -> Decimal
  -> Script (ContractId MarketCounter, ContractId PredictionMarket, ContractId LiquidityPosition)
-mkMarket admin counterCid policy isDynamic p0 v0 =
+mkMarketObserved admin collateral auditObservers counterCid policy isDynamic p0 v0 =
   submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Will Liverpool beat Brighton on 13 May 2026?"
       resolutionDescription = "Opta full-time scoreline"
+      collateral
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
       isDynamic
       liquidityPeriodSecs = 0
       initialProbability = p0
-      initialValueCC = v0
+      initialValue = v0
       feeBps = 30
       prizeFeeShareBps = 2000
       policy
-      auditObservers = []
+      auditObservers
       ticker = "EPL-26MAY13-LIV"
       eventTicker = "EPL-26MAY13"
       yesSubTitle = "Liverpool win"
       noSubTitle = "Draw or Brighton"
+
+mkMarket
+  : Party -> InstrumentId -> ContractId MarketCounter -> ResolutionPolicy -> Bool -> Decimal -> Decimal
+ -> Script (ContractId MarketCounter, ContractId PredictionMarket, ContractId LiquidityPosition)
+mkMarket admin collateral = mkMarketObserved admin collateral []
 
 fetchMarket : Party -> ContractId PredictionMarket -> Script PredictionMarket
 fetchMarket p cid = do
@@ -127,7 +158,7 @@ pmAmmMathInvariants = do
   let l = 100.0
       (x, y) = optimalReserves 0.5 l
       n = solveBuyShares x y l 10.0
-  -- 10 CC at ~0.5 must buy more than 10 but fewer than 20 YES.
+  -- 10 units of collateral at ~0.5 must buy more than 10 but fewer than 20 YES.
   assert (n > 10.0 && n < 20.0)
   let c = solveSellProceeds (x + 10.0 - n) (y + 10.0) l n
   assert (c <= 10.0 + 0.01 && c > 8.0)
@@ -138,60 +169,53 @@ pmAmmMathInvariants = do
 
 inAppWalletLifecycle : Script ()
 inAppWalletLifecycle = do
-  (admin, alice, bob) <- setup
-  aliceW <- mkWallet admin alice 50.0
-  wOpt <- queryContractId alice aliceW
-  case wOpt of
-    None -> abort "expected wallet visible"
-    Some w -> do
-      w.balanceCC === 50.0
-      w.depositedCC === 50.0
-      w.withdrawnCC === 0.0
-      w.depositRefs === ["0xdeposit"]
+  Env{admin, alice, bob, cbyn} <- setup
+  aliceW <- mkWallet admin cbyn alice 50.0
+  w0 <- fetchWallet alice aliceW
+  w0.instrument === cbyn
+  w0.balance === 50.0
+  w0.deposited === 50.0
+  w0.withdrawn === 0.0
+  w0.creditRefs === ["0xdeposit"]
 
   -- Crediting the same external transfer twice is rejected on-ledger; a fresh
   -- txRef appends to the record. Exercised on bob's wallet so alice's flow below
   -- stays on known balances.
-  bobW <- mkWallet admin bob 5.0
+  bobW <- mkWallet admin cbyn bob 5.0
   submitMustFail admin do
-    exerciseCmd bobW Deposit with amountCC = 1.0, txRef = "0xdeposit"
+    exerciseCmd bobW Deposit with amount = 1.0, txRef = "0xdeposit"
   bobW <- submit admin do
-    exerciseCmd bobW Deposit with amountCC = 10.0, txRef = "0xdeposit2"
-  bOpt <- queryContractId bob bobW
-  case bOpt of
-    None -> abort "expected wallet visible"
-    Some w -> do
-      w.balanceCC === 15.0
-      w.depositedCC === 15.0
-      w.depositRefs === ["0xdeposit2", "0xdeposit"]
+    exerciseCmd bobW Deposit with amount = 10.0, txRef = "0xdeposit2"
+  wb <- fetchWallet bob bobW
+  wb.balance === 15.0
+  wb.deposited === 15.0
+  wb.creditRefs === ["0xdeposit2", "0xdeposit"]
 
   -- Neither the owner nor the admin can debit unilaterally.
   submitMustFail alice do
-    exerciseCmd aliceW Debit with amountCC = 5.0, reason = "steal"
+    exerciseCmd aliceW Debit with amount = 5.0, reason = "steal"
   submitMustFail admin do
-    exerciseCmd aliceW Debit with amountCC = 5.0, reason = "steal"
+    exerciseCmd aliceW Debit with amount = 5.0, reason = "steal"
   -- A third party cannot withdraw from someone else's wallet.
   submitMustFail bob do
-    exerciseCmd aliceW Withdraw with amountCC = 5.0, nowSeconds = t0
+    exerciseCmd aliceW Withdraw with amount = 5.0, nowSeconds = t0
   -- Over-withdrawal is rejected.
   submitMustFail alice do
-    exerciseCmd aliceW Withdraw with amountCC = 60.0, nowSeconds = t0
+    exerciseCmd aliceW Withdraw with amount = 60.0, nowSeconds = t0
 
   -- Withdraw 20: balance debited, PendingPayout queued for the admin.
   (aliceW, payoutCid) <- submit alice do
-    exerciseCmd aliceW Withdraw with amountCC = 20.0, nowSeconds = t0
-  wOpt2 <- queryContractId alice aliceW
-  case wOpt2 of
-    None -> abort "expected wallet visible"
-    Some w -> do
-      w.balanceCC === 30.0
-      w.withdrawnCC === 20.0
+    exerciseCmd aliceW Withdraw with amount = 20.0, nowSeconds = t0
+  w1 <- fetchWallet alice aliceW
+  w1.balance === 30.0
+  w1.withdrawn === 20.0
   pOpt <- queryContractId alice payoutCid
   case pOpt of
     None -> abort "expected payout visible"
     Some p -> do
       p.reason === "withdraw"
-      p.amountCC === 20.0
+      p.amount === 20.0
+      p.instrument === cbyn
       p.marketId === 0
 
   -- Cancel with a refund target re-credits the in-app balance.
@@ -206,12 +230,12 @@ inAppWalletLifecycle = do
   -- Buys are capped by the in-app balance, and only the wallet's owner can
   -- spend it.
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
   submitMustFail (actAs alice <> readAs admin) do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 100.0
+      amount = 100.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
@@ -220,7 +244,7 @@ inAppWalletLifecycle = do
     exerciseCmd marketCid Buy with
       buyer = bob
       side = Yes
-      collateralCC = 10.0
+      amount = 10.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
@@ -232,23 +256,24 @@ inAppWalletLifecycle = do
 
 lifecycleBuySellResolveRedeem : Script ()
 lifecycleBuySellResolveRedeem = do
-  (admin, alice, bob) <- setup
+  Env{admin, alice, bob, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
-  aliceW <- mkWallet admin alice 100.0
-  bobW <- mkWallet admin bob 50.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 100.0
+  bobW <- mkWallet admin cbyn bob 50.0
 
   m0 <- fetchMarket admin marketCid
   m0.currentPrice === 0.5
   m0.status === Trading
+  m0.collateral === cbyn
   assert (m0.liquidityL > 0.0)
 
-  -- Alice buys YES with 10 CC debited from her in-app wallet.
+  -- Alice buys YES with 10 cBYN debited from her in-app wallet.
   (marketCid, alicePosCid, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 10.0
+      amount = 10.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
@@ -259,20 +284,21 @@ lifecycleBuySellResolveRedeem = do
   m1 <- fetchMarket admin marketCid
   assert (m1.currentPrice > 0.5)  -- YES demand moves the price up
   assert (m1.currentPrice < 1.0)
-  assert (m1.accumulatedFeesCC > 0.0)
-  assert (m1.prizePoolCC > 0.0)
-  m1.totalVolumeCC === 10.0
+  assert (m1.accumulatedFees > 0.0)
+  assert (m1.prizePool > 0.0)
+  m1.totalVolume === 10.0
+  m1.collateral === cbyn            -- the successor version keeps the denomination
 
   Some alicePos <- queryContractId alice alicePosCid
   assert (alicePos.yesShares > 10.0)  -- bought below 1.0/share
-  alicePos.costBasisCC === 10.0
+  alicePos.costBasis === 10.0
 
   -- Bob buys NO, price comes back down.
   (marketCid, _, bobW) <- submit (actAs bob <> readAs admin) do
     exerciseCmd marketCid Buy with
       buyer = bob
       side = No
-      collateralCC = 5.0
+      amount = 5.0
       minSharesOut = 1.0
       nowSeconds = tTrade + 100
       existingPosition = None
@@ -289,12 +315,12 @@ lifecycleBuySellResolveRedeem = do
       seller = alice
       side = Yes
       sharesIn = sellShares
-      minProceedsCC = 0.5
+      minProceeds = 0.5
       nowSeconds = tTrade + 200
       positionCid = alicePosCid
       walletCid = aliceW
   aliceBal2 <- walletBalance alice aliceW
-  -- Proceeds are positive but below 1 CC/share.
+  -- Proceeds are positive but below 1 unit per share.
   assert (aliceBal2 > 90.0 && aliceBal2 < 90.0 + sellShares)
 
   -- Too-early resolution is rejected.
@@ -325,13 +351,13 @@ lifecycleBuySellResolveRedeem = do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 1.0
+      amount = 1.0
       minSharesOut = 0.1
       nowSeconds = tAfterExpiry
       existingPosition = None
       walletCid = aliceW
 
-  -- Alice redeems: 1 CC per remaining winning YES share, into her wallet.
+  -- Alice redeems: 1 unit per remaining winning YES share, into her wallet.
   Some aliceFinal <- queryContractId alice alicePosCid
   aliceW <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid RedeemPosition with
@@ -348,10 +374,10 @@ lifecycleBuySellResolveRedeem = do
 
 swapSharesBetweenOutcomes : Script ()
 swapSharesBetweenOutcomes = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
-  aliceW <- mkWallet admin alice 20.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 20.0
 
   -- Alice mints 10 complete sets, then swaps 5 NO -> YES.
   (posCid, aliceW) <- submit (actAs alice <> readAs admin) do
@@ -397,21 +423,22 @@ swapSharesBetweenOutcomes = do
 
 liquidityPeriodGatesTrading : Script ()
 liquidityPeriodGatesTrading = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  aliceW <- mkWallet admin alice 100.0
+  aliceW <- mkWallet admin cbyn alice 100.0
   let periodSecs = 3600
   (_, marketCid, _) <- submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Liquidity-period market?"
       resolutionDescription = "operator"
+      collateral = cbyn
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
       isDynamic = True
       liquidityPeriodSecs = periodSecs
       initialProbability = 0.5
-      initialValueCC = 100.0
+      initialValue = 100.0
       feeBps = 30
       prizeFeeShareBps = 0
       policy = defaultPolicy
@@ -427,7 +454,7 @@ liquidityPeriodGatesTrading = do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 5.0
+      amount = 5.0
       minSharesOut = 1.0
       nowSeconds = duringPeriod
       existingPosition = None
@@ -445,8 +472,8 @@ liquidityPeriodGatesTrading = do
   (marketCid, _, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid ProvideLiquidity with
       provider = alice
-      valueIncreaseCC = 10.0
-      maxCostCC = 50.0
+      valueIncrease = 10.0
+      maxCost = 50.0
       nowSeconds = duringPeriod
       existingLpPosition = None
       walletCid = aliceW
@@ -457,7 +484,7 @@ liquidityPeriodGatesTrading = do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 5.0
+      amount = 5.0
       minSharesOut = 1.0
       nowSeconds = t0 + periodSecs + 10
       existingPosition = Some posCid
@@ -473,10 +500,10 @@ liquidityPeriodGatesTrading = do
 
 splitMergeCompleteSets : Script ()
 splitMergeCompleteSets = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy False 0.4 50.0
-  aliceW <- mkWallet admin alice 20.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.4 50.0
+  aliceW <- mkWallet admin cbyn alice 20.0
 
   (posCid, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid Split with
@@ -488,7 +515,7 @@ splitMergeCompleteSets = do
   Some pos <- queryContractId alice posCid
   pos.yesShares === 7.0
   pos.noShares === 7.0
-  pos.costBasisCC === 7.0
+  pos.costBasis === 7.0
   bal1 <- walletBalance alice aliceW
   bal1 === 13.0
 
@@ -520,18 +547,18 @@ splitMergeCompleteSets = do
 
 liquidityProvisionAndWithdrawal : Script ()
 liquidityProvisionAndWithdrawal = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
   -- Static pool so early withdrawal is allowed.
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy False 0.5 100.0
-  aliceW <- mkWallet admin alice 100.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 100.0
   m0 <- fetchMarket admin marketCid
 
   (marketCid, lpCid, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid ProvideLiquidity with
       provider = alice
-      valueIncreaseCC = 25.0
-      maxCostCC = 100.0
+      valueIncrease = 25.0
+      maxCost = 100.0
       nowSeconds = tTrade
       existingLpPosition = None
       walletCid = aliceW
@@ -544,6 +571,7 @@ liquidityProvisionAndWithdrawal = do
   assert (lp.lpTokens > 0.0)
   bal1 <- walletBalance alice aliceW
   assert (bal1 < 100.0)  -- provision cost debited
+  lp.deposited === 100.0 - bal1
 
   -- Early exit (static): shares + fee split, LP burned. No trades happened,
   -- so the fee credit is zero and the wallet cid passes through unchanged.
@@ -563,15 +591,15 @@ liquidityProvisionAndWithdrawal = do
 
 dynamicLpLockedUntilResolution : Script ()
 dynamicLpLockedUntilResolution = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
-  aliceW <- mkWallet admin alice 100.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 100.0
   (marketCid, lpCid, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid ProvideLiquidity with
       provider = alice
-      valueIncreaseCC = 10.0
-      maxCostCC = 50.0
+      valueIncrease = 10.0
+      maxCost = 50.0
       nowSeconds = tTrade
       existingLpPosition = None
       walletCid = aliceW
@@ -610,7 +638,7 @@ dynamicLpLockedUntilResolution = do
 
 reporterQuorumResolves : Script ()
 reporterQuorumResolves = do
-  (admin, alice, _) <- setup
+  Env{admin, cbyn} <- setup
   r1 <- allocateParty "Reporter1"
   r2 <- allocateParty "Reporter2"
   r3 <- allocateParty "Reporter3"
@@ -619,7 +647,7 @@ reporterQuorumResolves = do
         reporters = [r1, r2, r3]
         quorum = 2
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid policy True 0.5 100.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid policy True 0.5 100.0
   m <- fetchMarket admin marketCid
 
   -- T0 is disabled under this policy.
@@ -668,14 +696,14 @@ reporterQuorumResolves = do
 
 optimisticFinalizeUnchallenged : Script ()
 optimisticFinalizeUnchallenged = do
-  (admin, alice, bob) <- setup
+  Env{admin, alice, bob, cbyn} <- setup
   let policy = defaultPolicy with
         operatorResolution = False
         challengeSecs = 3600
-        bondCC = 10.0
+        bond = 10.0
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid policy True 0.5 100.0
-  bobW <- mkWallet admin bob 20.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid policy True 0.5 100.0
+  bobW <- mkWallet admin cbyn bob 20.0
 
   -- Propose before expiry fails.
   submitMustFail (actAs bob <> readAs admin) do
@@ -701,7 +729,8 @@ optimisticFinalizeUnchallenged = do
       finalizer = alice
       nowSeconds = tAfterExpiry + 100
   -- After the window, anyone finalizes; the bond returns to the proposer as
-  -- a PendingPayout the admin can settle into the in-app wallet.
+  -- a PendingPayout in the market's collateral that the admin can settle into
+  -- the in-app wallet.
   marketCid <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid FinalizeOutcome with
       finalizer = alice
@@ -710,7 +739,7 @@ optimisticFinalizeUnchallenged = do
   m2.status === Resolved
   m2.outcome === Some Yes
   payouts <- query @PendingPayout bob
-  bondPayoutCid <- case [cid | (cid, p) <- payouts, p.reason == "bond", p.user == bob, p.amountCC == 10.0] of
+  bondPayoutCid <- case [cid | (cid, p) <- payouts, p.reason == "bond", p.user == bob, p.amount == 10.0, p.instrument == cbyn] of
     (cid :: _) -> return cid
     [] -> abort "expected bond payout"
   bobW <- submit admin do
@@ -720,7 +749,7 @@ optimisticFinalizeUnchallenged = do
 
 optimisticChallengeEscalatesToQuorum : Script ()
 optimisticChallengeEscalatesToQuorum = do
-  (admin, alice, bob) <- setup
+  Env{admin, alice, bob, cbyn} <- setup
   r1 <- allocateParty "ReporterA"
   r2 <- allocateParty "ReporterB"
   let policy = defaultPolicy with
@@ -728,11 +757,11 @@ optimisticChallengeEscalatesToQuorum = do
         reporters = [r1, r2]
         quorum = 2
         challengeSecs = 3600
-        bondCC = 10.0
+        bond = 10.0
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid policy True 0.5 100.0
-  bobW <- mkWallet admin bob 20.0
-  aliceW <- mkWallet admin alice 20.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid policy True 0.5 100.0
+  bobW <- mkWallet admin cbyn bob 20.0
+  aliceW <- mkWallet admin cbyn alice 20.0
   m <- fetchMarket admin marketCid
 
   -- Bob proposes NO (wrongly); Alice challenges with YES. Both bonds are
@@ -779,7 +808,7 @@ optimisticChallengeEscalatesToQuorum = do
   m2.status === Resolved
   m2.outcome === Some Yes
   payouts <- query @PendingPayout alice
-  winCid <- case [cid | (cid, p) <- payouts, p.reason == "bond", p.user == alice, p.amountCC == 20.0] of
+  winCid <- case [cid | (cid, p) <- payouts, p.reason == "bond", p.user == alice, p.amount == 20.0, p.instrument == cbyn] of
     (cid :: _) -> return cid
     [] -> abort "expected slashed-bond payout"
   aliceW <- submit admin do
@@ -793,15 +822,15 @@ optimisticChallengeEscalatesToQuorum = do
 
 voidRefundsCostBasis : Script ()
 voidRefundsCostBasis = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
-  aliceW <- mkWallet admin alice 10.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 10.0
   (marketCid, posCid, aliceW) <- submit (actAs alice <> readAs admin) do
     exerciseCmd marketCid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 8.0
+      amount = 8.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
@@ -831,23 +860,23 @@ voidRefundsCostBasis = do
 
 forecastCommitAndScoring : Script ()
 forecastCommitAndScoring = do
-  (admin, alice, bob) <- setup
+  Env{admin, alice, bob, cbyn} <- setup
   counterCid <- createCounter admin
-  (_, marketCid, _) <- mkMarket admin counterCid defaultPolicy True 0.5 100.0
-  bobW <- mkWallet admin bob 200.0
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy True 0.5 100.0
+  bobW <- mkWallet admin cbyn bob 200.0
 
   -- Trade to fund the prize pool (20% of the 0.3% fee).
   (marketCid, _, bobW) <- submit (actAs bob <> readAs admin) do
     exerciseCmd marketCid Buy with
       buyer = bob
       side = Yes
-      collateralCC = 100.0
+      amount = 100.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
       walletCid = bobW
   m <- fetchMarket admin marketCid
-  assert (m.prizePoolCC > 0.0)
+  assert (m.prizePool > 0.0)
 
   -- Alice's model is confident YES (beats the market price), Bob's says NO.
   fAlice <- submit (actAs alice <> readAs admin) do
@@ -880,10 +909,14 @@ forecastCommitAndScoring = do
       forecastCids = [fAlice, fBob]
       nowSeconds = tAfterExpiry + 10
   m2 <- fetchMarket admin marketCid
-  m2.prizePoolCC === 0.0
-  -- Only Alice beat the market; she gets the whole pool.
+  m2.prizePool === 0.0
+  -- Only Alice beat the market; she gets the whole pool, owed in the market's collateral.
   alicePrizes <- query @PendingPayout alice
-  assert (any (\(_, p) -> p.reason == "model-prize" && p.user == alice) alicePrizes)
+  case [p | (_, p) <- alicePrizes, p.reason == "model-prize", p.user == alice] of
+    [p] -> do
+      p.instrument === cbyn
+      p.amount === m.prizePool
+    _ -> abort "expected exactly one model-prize payout for alice"
   bobPrizes <- query @PendingPayout bob
   assert (not (any (\(_, p) -> p.reason == "model-prize" && p.user == bob) bobPrizes))
 
@@ -895,22 +928,23 @@ forecastCommitAndScoring = do
 
 catalogIdentityOnMarkets : Script ()
 catalogIdentityOnMarkets = do
-  (admin, alice, _) <- setup
+  Env{admin, alice, cbyn} <- setup
   counterCid <- createCounter admin
-  aliceW <- mkWallet admin alice 100.0
-  (counterCid, cut25Cid, _) <- mkMarket admin counterCid defaultPolicy False 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 100.0
+  (counterCid, cut25Cid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.5 100.0
   -- CreateMarket consumes the counter and returns the successor; keep threading it.
   (counterCid, holdCid, _) <- submit admin do
     exerciseCmd counterCid CreateMarket with
       question = "Will the Fed hold in March 2026?"
       resolutionDescription = "FOMC statement"
+      collateral = cbyn
       createdAt = t0
       expiresAt = tExpiry
       gracePeriodSecs = grace
       isDynamic = False
       liquidityPeriodSecs = 0
       initialProbability = 0.4
-      initialValueCC = 100.0
+      initialValue = 100.0
       feeBps = 30
       prizeFeeShareBps = 0
       policy = defaultPolicy
@@ -934,7 +968,7 @@ catalogIdentityOnMarkets = do
     exerciseCmd cut25Cid Buy with
       buyer = alice
       side = Yes
-      collateralCC = 5.0
+      amount = 5.0
       minSharesOut = 1.0
       nowSeconds = tTrade
       existingPosition = None
@@ -948,13 +982,14 @@ catalogIdentityOnMarkets = do
         exerciseCmd counterCid CreateMarket with
           question = "Blank identity?"
           resolutionDescription = "operator"
+          collateral = cbyn
           createdAt = t0
           expiresAt = tExpiry
           gracePeriodSecs = grace
           isDynamic = False
           liquidityPeriodSecs = 0
           initialProbability = 0.5
-          initialValueCC = 50.0
+          initialValue = 50.0
           feeBps = 30
           prizeFeeShareBps = 0
           policy = defaultPolicy
@@ -965,3 +1000,512 @@ catalogIdentityOnMarkets = do
           noSubTitle = "No"
   blank "" "EPL-26MAY13"
   blank "EPL-26MAY13-BLANK" ""
+
+-- ---------------------------------------------------------------------------
+-- v17: one wallet per (owner, instrument). Money only ever moves through a
+-- wallet that holds the instrument it is in - on the debit side (Buy, Split,
+-- ProvideLiquidity, bonds) and on the credit side (Sell, Merge, Redeem,
+-- WithdrawLiquidity, payout settlement).
+-- ---------------------------------------------------------------------------
+
+walletInstrumentMustMatchCollateral : Script ()
+walletInstrumentMustMatchCollateral = do
+  Env{admin, alice, cbyn, tro} <- setup
+  counterCid <- createCounter admin
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.5 100.0
+  aliceTro <- mkWallet admin tro alice 100.0
+  aliceCbyn <- mkWallet admin cbyn alice 100.0
+
+  -- A TRO wallet cannot pay for a cBYN market: not as a trader...
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Buy with
+      buyer = alice
+      side = Yes
+      amount = 10.0
+      minSharesOut = 1.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = aliceTro
+  -- ...not as a liquidity provider...
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid ProvideLiquidity with
+      provider = alice
+      valueIncrease = 10.0
+      maxCost = 50.0
+      nowSeconds = tTrade
+      existingLpPosition = None
+      walletCid = aliceTro
+  -- ...and not when minting complete sets.
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Split with
+      user = alice
+      amount = 5.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = aliceTro
+  -- The same trade through the cBYN wallet goes through and leaves TRO untouched.
+  (marketCid, posCid, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Buy with
+      buyer = alice
+      side = Yes
+      amount = 10.0
+      minSharesOut = 1.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = aliceCbyn
+  cbynBal <- walletBalance alice aliceCbyn
+  cbynBal === 90.0
+  troBal <- walletBalance alice aliceTro
+  troBal === 100.0
+  -- Credits are checked too: proceeds cannot land in a wallet of another instrument.
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Sell with
+      seller = alice
+      side = Yes
+      sharesIn = 1.0
+      minProceeds = 0.0
+      nowSeconds = tTrade + 10
+      positionCid = posCid
+      walletCid = aliceTro
+  (_, _, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Sell with
+      seller = alice
+      side = Yes
+      sharesIn = 1.0
+      minProceeds = 0.0
+      nowSeconds = tTrade + 10
+      positionCid = posCid
+      walletCid = aliceCbyn
+  cbynBal2 <- walletBalance alice aliceCbyn
+  assert (cbynBal2 > 90.0)
+  troBal2 <- walletBalance alice aliceTro
+  troBal2 === 100.0
+
+-- The instrument check guards every remaining money move as well: the credits
+-- of Merge, RedeemPosition and WithdrawLiquidity, and the bond debits of
+-- ProposeOutcome and ChallengeOutcome. Each refusal is followed by the same
+-- move through the cBYN wallet, so only the instrument was wrong.
+walletInstrumentCheckedOnEveryMove : Script ()
+walletInstrumentCheckedOnEveryMove = do
+  Env{admin, alice, bob, cbyn, tro} <- setup
+  counterCid <- createCounter admin
+  (counterCid, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.5 100.0
+  aliceCbyn <- mkWallet admin cbyn alice 100.0
+  aliceTro <- mkWallet admin tro alice 100.0
+  bobCbyn <- mkWallet admin cbyn bob 100.0
+  bobTro <- mkWallet admin tro bob 100.0
+
+  -- Merge: complete sets cannot be burned into a TRO wallet.
+  (posCid, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Split with
+      user = alice
+      amount = 10.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = aliceCbyn
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Merge with
+      user = alice
+      amount = 4.0
+      nowSeconds = tTrade + 10
+      positionCid = posCid
+      walletCid = aliceTro
+  (posCid, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Merge with
+      user = alice
+      amount = 4.0
+      nowSeconds = tTrade + 10
+      positionCid = posCid
+      walletCid = aliceCbyn
+  balAfterMerge <- walletBalance alice aliceCbyn
+  balAfterMerge === 94.0
+
+  -- Alice provides liquidity and bob trades, so the pool holds fees and a
+  -- winning reserve for the LP to collect after resolution.
+  (marketCid, lpCid, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid ProvideLiquidity with
+      provider = alice
+      valueIncrease = 20.0
+      maxCost = 50.0
+      nowSeconds = tTrade + 20
+      existingLpPosition = None
+      walletCid = aliceCbyn
+  (marketCid, _, bobCbyn) <- submit (actAs bob <> readAs admin) do
+    exerciseCmd marketCid Buy with
+      buyer = bob
+      side = Yes
+      amount = 20.0
+      minSharesOut = 1.0
+      nowSeconds = tTrade + 30
+      existingPosition = None
+      walletCid = bobCbyn
+  marketCid <- submit admin do
+    exerciseCmd marketCid ResolveT0 with
+      resolvedOutcome = Yes
+      sourceUri = "https://example.com/result"
+      nowSeconds = tAfterExpiry
+
+  -- RedeemPosition: winnings cannot land in a TRO wallet.
+  balBeforeRedeem <- walletBalance alice aliceCbyn
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid RedeemPosition with
+      holder = alice
+      nowSeconds = tAfterExpiry + 10
+      positionCid = posCid
+      walletCid = aliceTro
+  aliceCbyn <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid RedeemPosition with
+      holder = alice
+      nowSeconds = tAfterExpiry + 10
+      positionCid = posCid
+      walletCid = aliceCbyn
+  balAfterRedeem <- walletBalance alice aliceCbyn
+  balAfterRedeem === balBeforeRedeem + 6.0   -- 6 YES left after the merge, 1 unit each
+
+  -- WithdrawLiquidity: the LP's share of the winning reserve and the fees
+  -- cannot land in a TRO wallet either.
+  Some lp <- queryContractId alice lpCid
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd marketCid WithdrawLiquidity with
+      provider = alice
+      lpTokensToBurn = lp.lpTokens
+      nowSeconds = tAfterExpiry + 20
+      lpPositionCid = lpCid
+      existingPosition = None
+      walletCid = aliceTro
+  (_, _, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid WithdrawLiquidity with
+      provider = alice
+      lpTokensToBurn = lp.lpTokens
+      nowSeconds = tAfterExpiry + 20
+      lpPositionCid = lpCid
+      existingPosition = None
+      walletCid = aliceCbyn
+  balAfterLp <- walletBalance alice aliceCbyn
+  assert (balAfterLp > balAfterRedeem)
+
+  -- T3 bonds: neither the proposer's nor the challenger's bond can be paid
+  -- from a TRO wallet.
+  let policy = defaultPolicy with
+        operatorResolution = False
+        challengeSecs = 3600
+        bond = 10.0
+  (_, t3Cid, _) <- mkMarket admin cbyn counterCid policy True 0.5 100.0
+  submitMustFail (actAs alice <> readAs admin) do
+    exerciseCmd t3Cid ProposeOutcome with
+      proposer = alice
+      proposedOutcome = Yes
+      nowSeconds = tAfterExpiry
+      walletCid = aliceTro
+  (t3Cid, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd t3Cid ProposeOutcome with
+      proposer = alice
+      proposedOutcome = Yes
+      nowSeconds = tAfterExpiry
+      walletCid = aliceCbyn
+  balAfterBond <- walletBalance alice aliceCbyn
+  balAfterBond === balAfterLp - 10.0
+  submitMustFail (actAs bob <> readAs admin) do
+    exerciseCmd t3Cid ChallengeOutcome with
+      challenger = bob
+      challengerOutcome = No
+      nowSeconds = tAfterExpiry + 100
+      walletCid = bobTro
+  (_, bobCbyn) <- submit (actAs bob <> readAs admin) do
+    exerciseCmd t3Cid ChallengeOutcome with
+      challenger = bob
+      challengerOutcome = No
+      nowSeconds = tAfterExpiry + 100
+      walletCid = bobCbyn
+  bobBal <- walletBalance bob bobCbyn
+  bobBal === 70.0   -- 100 - 20 (buy) - 10 (bond)
+
+  -- Neither TRO balance moved through any of it.
+  aliceTroBal <- walletBalance alice aliceTro
+  aliceTroBal === 100.0
+  bobTroBal <- walletBalance bob bobTro
+  bobTroBal === 100.0
+
+twoInstrumentWalletsCoexist : Script ()
+twoInstrumentWalletsCoexist = do
+  Env{admin, alice, cbyn, tro} <- setup
+  aliceCbyn <- mkWallet admin cbyn alice 50.0
+  aliceTro <- mkWallet admin tro alice 20.0
+  -- Alice sees two wallets, one per instrument, each keeping its own books.
+  wallets <- query @UserWallet alice
+  length wallets === 2
+  let ofInstrument i = [w | (_, w) <- wallets, w.instrument == i]
+  case (ofInstrument cbyn, ofInstrument tro) of
+    ([c], [t]) -> do
+      c.balance === 50.0
+      c.deposited === 50.0
+      t.balance === 20.0
+      t.deposited === 20.0
+    _ -> abort "expected exactly one wallet per instrument"
+  -- A cBYN market debits only the cBYN wallet...
+  counterCid <- createCounter admin
+  (_, marketCid, _) <- mkMarket admin cbyn counterCid defaultPolicy False 0.5 100.0
+  (_, _, aliceCbyn) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid Buy with
+      buyer = alice
+      side = Yes
+      amount = 10.0
+      minSharesOut = 1.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = aliceCbyn
+  cbynBal <- walletBalance alice aliceCbyn
+  cbynBal === 40.0
+  troBal <- walletBalance alice aliceTro
+  troBal === 20.0
+  -- ...and a TRO grant credits only the TRO wallet.
+  aliceTro <- submit admin do
+    exerciseCmd aliceTro Grant with amount = 5.0, ref = "reward:1", reason = "first_deposit_bonus"
+  troBal2 <- walletBalance alice aliceTro
+  troBal2 === 25.0
+  cbynBal2 <- walletBalance alice aliceCbyn
+  cbynBal2 === 40.0
+
+grantIsIdempotent : Script ()
+grantIsIdempotent = do
+  Env{admin, alice, tro} <- setup
+  aliceTro <- mkWallet admin tro alice 0.0
+  -- A reward lands as a Grant: balance up, `deposited` untouched (nothing came
+  -- in from outside), the ref recorded.
+  aliceTro <- submit admin do
+    exerciseCmd aliceTro Grant with amount = 5.0, ref = "reward:g1", reason = "trade_volume_rebate"
+  w1 <- fetchWallet alice aliceTro
+  w1.balance === 5.0
+  w1.deposited === 0.0
+  w1.creditRefs === ["reward:g1"]
+  -- Replaying the same ref aborts on-ledger, whatever the amount or reason.
+  submitMustFail admin do
+    exerciseCmd aliceTro Grant with amount = 5.0, ref = "reward:g1", reason = "trade_volume_rebate"
+  submitMustFail admin do
+    exerciseCmd aliceTro Grant with amount = 1.0, ref = "reward:g1", reason = "manual"
+  -- Deposits and grants share one ref namespace.
+  submitMustFail admin do
+    exerciseCmd aliceTro Deposit with amount = 1.0, txRef = "reward:g1"
+  -- Only the admin grants, and only a positive amount.
+  submitMustFail alice do
+    exerciseCmd aliceTro Grant with amount = 5.0, ref = "reward:g2", reason = "self-service"
+  submitMustFail admin do
+    exerciseCmd aliceTro Grant with amount = 0.0, ref = "reward:g2", reason = "manual"
+  -- A fresh ref applies; refs are kept newest first.
+  aliceTro <- submit admin do
+    exerciseCmd aliceTro Grant with amount = 7.0, ref = "reward:g2", reason = "manual"
+  w2 <- fetchWallet alice aliceTro
+  w2.balance === 12.0
+  w2.deposited === 0.0
+  w2.creditRefs === ["reward:g2", "reward:g1"]
+  -- The namespace is shared in the other direction too: a deposit's txRef can
+  -- never be reused by a grant, and only the deposit counts as deposited.
+  aliceTro <- submit admin do
+    exerciseCmd aliceTro Deposit with amount = 1.0, txRef = "0xtro-deposit"
+  submitMustFail admin do
+    exerciseCmd aliceTro Grant with amount = 1.0, ref = "0xtro-deposit", reason = "manual"
+  w3 <- fetchWallet alice aliceTro
+  w3.balance === 13.0
+  w3.deposited === 1.0
+  w3.creditRefs === ["0xtro-deposit", "reward:g2", "reward:g1"]
+  -- Granted TRO is withdrawable like any other balance.
+  (aliceTro, payoutCid) <- submit alice do
+    exerciseCmd aliceTro Withdraw with amount = 13.0, nowSeconds = t0
+  bal <- walletBalance alice aliceTro
+  bal === 0.0
+  Some payout <- queryContractId alice payoutCid
+  payout.instrument === tro
+  payout.amount === 13.0
+
+withdrawCarriesInstrument : Script ()
+withdrawCarriesInstrument = do
+  Env{admin, alice, cbyn, tro} <- setup
+  aliceCbyn <- mkWallet admin cbyn alice 50.0
+  aliceTro <- mkWallet admin tro alice 20.0
+  -- A withdrawal queues a payout in the wallet's instrument...
+  (aliceTro, troPayoutCid) <- submit alice do
+    exerciseCmd aliceTro Withdraw with amount = 8.0, nowSeconds = t0
+  Some troPayout <- queryContractId alice troPayoutCid
+  troPayout.instrument === tro
+  troPayout.amount === 8.0
+  troPayout.reason === "withdraw"
+  troPayout.marketId === 0
+  w <- fetchWallet alice aliceTro
+  w.balance === 12.0
+  w.withdrawn === 8.0
+  -- ...and from the other wallet, in the other instrument.
+  (aliceCbyn, cbynPayoutCid) <- submit alice do
+    exerciseCmd aliceCbyn Withdraw with amount = 5.0, nowSeconds = t0
+  Some cbynPayout <- queryContractId alice cbynPayoutCid
+  cbynPayout.instrument === cbyn
+  cbynPayout.amount === 5.0
+  -- Settling a payout into a wallet checks the instrument on the admin's path
+  -- (SettleToWallet) and on the user's (CancelPayout with a refund target).
+  submitMustFail admin do
+    exerciseCmd troPayoutCid SettleToWallet with walletCid = aliceCbyn
+  submitMustFail alice do
+    exerciseCmd troPayoutCid CancelPayout with refundWalletCid = Some aliceCbyn
+  refund <- submit alice do
+    exerciseCmd troPayoutCid CancelPayout with refundWalletCid = Some aliceTro
+  aliceTro <- case refund of
+    None -> abort "expected refund credit"
+    Some wCid -> return wCid
+  troBal <- walletBalance alice aliceTro
+  troBal === 20.0
+  aliceCbyn <- submit admin do
+    exerciseCmd cbynPayoutCid SettleToWallet with walletCid = aliceCbyn
+  cbynBal <- walletBalance alice aliceCbyn
+  cbynBal === 50.0
+
+regulatorSeesWalletAndPayout : Script ()
+regulatorSeesWalletAndPayout = do
+  Env{admin, alice, bob, regulator, cbyn} <- setup
+  -- A wallet created with the regulator as audit observer is visible to it...
+  aliceW <- mkWalletObserved admin cbyn [regulator] alice 50.0
+  Some w <- queryContractId regulator aliceW
+  w.auditObservers === [regulator]
+  w.balance === 50.0
+  -- ...but not to an unrelated party, and observing confers no authority.
+  bobView <- queryContractId bob aliceW
+  bobView === None
+  submitMustFail regulator do
+    exerciseCmd aliceW Withdraw with amount = 1.0, nowSeconds = t0
+  -- A withdrawal's payout inherits the wallet's audit observers.
+  (aliceW, payoutCid) <- submit alice do
+    exerciseCmd aliceW Withdraw with amount = 10.0, nowSeconds = t0
+  Some payout <- queryContractId regulator payoutCid
+  payout.auditObservers === [regulator]
+  payout.instrument === cbyn
+  payout.amount === 10.0
+  -- A payout the market creates (a T3 bond refund) carries the market's audit
+  -- observers and its collateral.
+  let policy = defaultPolicy with
+        operatorResolution = False
+        challengeSecs = 3600
+        bond = 10.0
+  counterCid <- createCounter admin
+  (_, marketCid, _) <- mkMarketObserved admin cbyn [regulator] counterCid policy True 0.5 100.0
+  (marketCid, _) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid ProposeOutcome with
+      proposer = alice
+      proposedOutcome = Yes
+      nowSeconds = tAfterExpiry
+      walletCid = aliceW
+  _ <- submit (actAs bob <> readAs admin) do
+    exerciseCmd marketCid FinalizeOutcome with
+      finalizer = bob
+      nowSeconds = tAfterExpiry + 3700
+  regulatorPayouts <- query @PendingPayout regulator
+  case [p | (_, p) <- regulatorPayouts, p.reason == "bond"] of
+    [p] -> do
+      p.user === alice
+      p.amount === 10.0
+      p.instrument === cbyn
+      p.auditObservers === [regulator]
+    _ -> abort "expected the regulator to see exactly one bond payout"
+
+-- Every payout a market queues - a slashed bond settled by Resolve, a bond
+-- refunded by VoidMarket, a model prize from ScoreAndDistribute - is owed in the
+-- market's collateral and visible to the market's audit observers, and to nobody
+-- else. (FinalizeOutcome's bond refund is covered in regulatorSeesWalletAndPayout.)
+marketPayoutsCarryCollateralAndObservers : Script ()
+marketPayoutsCarryCollateralAndObservers = do
+  Env{admin, alice, bob, regulator, cbyn} <- setup
+  stranger <- allocateParty "Stranger"
+  r1 <- allocateParty "ReporterA"
+  r2 <- allocateParty "ReporterB"
+  let policy = defaultPolicy with
+        operatorResolution = False
+        reporters = [r1, r2]
+        quorum = 2
+        challengeSecs = 3600
+        bond = 10.0
+  counterCid <- createCounter admin
+  (counterCid, marketCid, _) <- mkMarketObserved admin cbyn [regulator] counterCid policy True 0.5 100.0
+  aliceW <- mkWallet admin cbyn alice 50.0
+  bobW <- mkWallet admin cbyn bob 50.0
+  m <- fetchMarket admin marketCid
+
+  -- Bob's trade funds the prize pool; alice's forecast beats the market.
+  (marketCid, _, bobW) <- submit (actAs bob <> readAs admin) do
+    exerciseCmd marketCid Buy with
+      buyer = bob
+      side = Yes
+      amount = 20.0
+      minSharesOut = 1.0
+      nowSeconds = tTrade
+      existingPosition = None
+      walletCid = bobW
+  fAlice <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid CommitForecast with
+      author = alice
+      modelId = "alice-model-1"
+      probabilityYes = 0.9
+      nowSeconds = tTrade + 10
+  mTraded <- fetchMarket admin marketCid
+  assert (mTraded.prizePool > 0.0)
+
+  -- Bob proposes No, alice challenges Yes and the reporters side with alice:
+  -- Resolve slashes bob's bond to alice...
+  (marketCid, bobW) <- submit (actAs bob <> readAs admin) do
+    exerciseCmd marketCid ProposeOutcome with
+      proposer = bob
+      proposedOutcome = No
+      nowSeconds = tAfterExpiry
+      walletCid = bobW
+  (marketCid, _) <- submit (actAs alice <> readAs admin) do
+    exerciseCmd marketCid ChallengeOutcome with
+      challenger = alice
+      challengerOutcome = Yes
+      nowSeconds = tAfterExpiry + 100
+      walletCid = aliceW
+  let mkAtt reporter = createCmd OutcomeAttestation with
+        attester = reporter
+        admin
+        marketId = m.marketId
+        sourceUri = "https://example.com/result"
+        fetchedAt = tAfterExpiry + 200
+        outcome = Yes
+        payloadHash = "deadbeef"
+        sourceSignature = None
+        responseExcerpt = None
+  att1 <- submit r1 (mkAtt r1)
+  att2 <- submit r2 (mkAtt r2)
+  marketCid <- submit admin do
+    exerciseCmd marketCid Resolve with
+      attestationCids = [att1, att2]
+      nowSeconds = tAfterExpiry + 300
+  -- ...and ScoreAndDistribute owes alice the prize pool.
+  _ <- submit admin do
+    exerciseCmd marketCid ScoreAndDistribute with
+      forecastCids = [fAlice]
+      nowSeconds = tAfterExpiry + 400
+
+  -- A second market: an unchallenged proposal superseded by VoidMarket refunds
+  -- the proposer's bond through the same settlement.
+  (_, voidCid, _) <- mkMarketObserved admin cbyn [regulator] counterCid policy True 0.5 100.0
+  (voidCid, _) <- submit (actAs bob <> readAs admin) do
+    exerciseCmd voidCid ProposeOutcome with
+      proposer = bob
+      proposedOutcome = Yes
+      nowSeconds = tAfterExpiry
+      walletCid = bobW
+  mVoid <- fetchMarket admin voidCid
+  _ <- submit admin do
+    exerciseCmd voidCid VoidMarket with nowSeconds = tAfterGrace
+
+  -- The regulator sees all three payouts, each in the collateral and carrying
+  -- the market's observers; a stranger sees none.
+  payouts <- query @PendingPayout regulator
+  length payouts === 3
+  forA_ payouts (\(_, p) -> do
+    p.instrument === cbyn
+    p.auditObservers === [regulator])
+  let owed reason user marketId =
+        [p.amount | (_, p) <- payouts, p.reason == reason, p.user == user, p.marketId == marketId]
+  owed "bond" alice m.marketId === [20.0]
+  owed "model-prize" alice m.marketId === [mTraded.prizePool]
+  owed "bond" bob mVoid.marketId === [10.0]
+  owed "bond" bob m.marketId === []
+  strangerView <- query @PendingPayout stranger
+  length strangerView === 0

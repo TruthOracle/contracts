@@ -2,14 +2,17 @@
 
 Step-by-step guide to build the DAR and deploy it on Canton (local node or Canton Network).
 
-**Current package: `truthoracle-v16` 1.0.0.** Breaking changes bump the package *name*
-because Canton's smart-contract-upgrade check rejects a schema-incompatible DAR uploaded
-under an existing name. v16 drops presentation (`imageUrl`, `description`, `category`) from
-the market — the backend catalog owns it — and keeps v15's mandatory catalog identity
-(`ticker`, `eventTicker`, `yesSubTitle`, `noSubTitle`) and the v14 accounts-era rules
-(`UserWallet` created only by the backend treasury, `UserWallet.depositRefs` a mandatory
-`[Text]`). It is deployed from scratch: no upgrade path from v15 or v14, whose contracts on
-DevNet are abandoned like v13's before them (see the last section).
+**Current package: `truthoracle-v17` 1.0.0** (package id
+`5b52a2ca8ed402b716d7e37ffafb3432b4c773472702822ce9059d899266d66c`, SDK 3.6.0). Breaking changes
+bump the package *name* because Canton's smart-contract-upgrade check rejects a schema-incompatible
+DAR uploaded under an existing name. v17 makes the collateral a configurable CIP-56 instrument:
+`PredictionMarket` / `CreateMarket` carry `collateral : InstrumentId`, `UserWallet` is one contract
+per (owner, instrument) with `creditRefs`, a `Grant` choice and `auditObservers`, `PendingPayout`
+carries its `instrument` and `auditObservers`, the `CC` suffix is gone from every field, and
+`Incentives.daml` is deleted. It keeps v16's off-ledger presentation and v15's mandatory catalog
+identity (`ticker`, `eventTicker`, `yesSubTitle`, `noSubTitle`). It is deployed from scratch: no
+upgrade path from v16, whose DevNet contracts are abandoned like v15's and v14's before them (see
+the last section).
 
 ---
 
@@ -33,7 +36,7 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
    npm run dars:build
    ```
 
-   Produces `daml/.daml/dist/truthoracle-v16-1.0.0.dar`.
+   Produces `daml/.daml/dist/truthoracle-v17-1.0.0.dar`.
 
 3. Upload it:
 
@@ -41,23 +44,23 @@ For the Cantor8 zkpc (MainNet) node — or any other remote participant exposing
    npm run dars:upload
    ```
 
-   On success the script prints the participant's response (empty `{}` for `POST /v2/packages` in Canton 3.4). To upload a different DAR, pass a path: `npm run dars:upload -- path/to/file.dar`. Run `npm run dars:upload -- --help` for details.
+   Without a path the script uploads the DAR `daml/daml.yaml` names (`daml/.daml/dist/<name>-<version>.dar`, the one step 2 built). On success it prints the participant's response (`POST /v2/packages` answers an empty `{}`). To upload a different DAR, pass a path: `npm run dars:upload -- path/to/file.dar`. Run `npm run dars:upload -- --help` for details.
 
-4. **Get the package ID** (the upload response doesn't contain it — Canton 3.4 returns `{}`). The ID lives inside the DAR's `META-INF/MANIFEST.MF` as the `Main-Dalf` suffix:
+4. **Get the package ID** (the upload response doesn't contain it — the participant returns `{}`). The ID lives inside the DAR's `META-INF/MANIFEST.MF` as the `Main-Dalf` suffix:
 
    ```
    # With the Daml SDK on PATH (recommended):
-   dpm inspect-dar daml/.daml/dist/truthoracle-v16-1.0.0.dar --json | jq -r .main_package_id
+   dpm inspect-dar daml/.daml/dist/truthoracle-v17-1.0.0.dar --json | jq -r .main_package_id
 
    # Or read the manifest directly (no SDK required — MANIFEST.MF wraps at 72 chars
    # with leading-space continuation, so strip whitespace before parsing):
-   unzip -p daml/.daml/dist/truthoracle-v16-1.0.0.dar META-INF/MANIFEST.MF \
+   unzip -p daml/.daml/dist/truthoracle-v17-1.0.0.dar META-INF/MANIFEST.MF \
      | tr -d '\r\n ' \
      | grep -oE 'Main-Dalf:[^/]+' \
      | sed -E 's/.*-([0-9a-f]{64})$/\1/'
    ```
 
-   Both print the 64-hex package ID (`95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1` for v16 1.0.0 built with SDK 3.5.12). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` so the frontend's `frontend/constants.ts` fallback is overridden, and the participant resolves choices to the freshly uploaded package.
+   Both print the 64-hex package ID (`5b52a2ca8ed402b716d7e37ffafb3432b4c773472702822ce9059d899266d66c` for v17 1.0.0 built with SDK 3.6.0). Set it in the repo-root `.env` as `VITE_TRUTHORACLE_PACKAGE_ID=…` (the scripts' Create/Exercise commands pin the package by id), and give the same id to the backend (`TRUTHORACLE_PACKAGE_ID`) and the frontend (`VITE_TRUTHORACLE_PACKAGE_ID`) so every submitter resolves choices to the freshly uploaded package.
 
    To confirm the participant has it, `curl -H "Authorization: Bearer $TOKEN" "$LEDGER_API/v2/packages"` returns `{"packageIds":[…]}` — the new ID will be in that list (the endpoint doesn't label them, so cross-reference by the ID you extracted above).
 
@@ -71,7 +74,7 @@ From the `daml/` directory after building:
 
 ```bash
 cd daml
-dpm sandbox --dar .daml/dist/truthoracle-v16-1.0.0.dar
+dpm sandbox --dar .daml/dist/truthoracle-v17-1.0.0.dar
 ```
 
 Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your DAR will be uploaded automatically.
@@ -89,7 +92,7 @@ Sandbox will start (Ledger API on port **6865**, Admin API on **6866**) and your
    ```
 3. In the console, upload the DAR (use the full path to your DAR):
    ```bash
-   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-contracts/daml/.daml/dist/truthoracle-v16-1.0.0.dar")
+   sandbox.dars.upload("/Users/sachin/Desktop/TruthOracle/canton/truthoracle-contracts/daml/.daml/dist/truthoracle-v17-1.0.0.dar")
    ```
 4. Optional: list DARs and allocate parties:
    ```bash
@@ -104,7 +107,7 @@ Point your frontend/Ledger API client at **localhost:6865** to use the sandbox.
 
 ## Prerequisites
 
-- **dpm with the SDK pinned in `daml.yaml`** (3.5.12 — keep it on the latest stable release, see the repo README "Toolchain") and a JDK. Install: [dpm installation](https://docs.canton.network/sdks-tools/cli-tools/dpm#installation).
+- **dpm with the SDK pinned in `daml.yaml`** (3.6.0 — keep it on the latest stable release, see the repo README "Toolchain"; the DevNet participant runs Canton 3.6.1) and a JDK. Install: [dpm installation](https://docs.canton.network/sdks-tools/cli-tools/dpm#installation).
 - **Canton** – either:
   - **Local**: DPM sandbox (`dpm sandbox`) or Canton Open Source, or
   - **Canton Network TestNet**: access to a participant node (validator or via a provider).
@@ -123,8 +126,8 @@ dpm build --all
 This produces the templates DAR under `.daml/dist/` (and the test package's DAR under
 `test/.daml/dist/`, which is never uploaded):
 
-- **Path**: `daml/.daml/dist/truthoracle-v16-1.0.0.dar`
-- **Name**: `truthoracle-v16`, version `1.0.0` (from `daml.yaml`)
+- **Path**: `daml/.daml/dist/truthoracle-v17-1.0.0.dar`
+- **Name**: `truthoracle-v17`, version `1.0.0` (from `daml.yaml`)
 
 Run the Daml Script suite before deploying:
 
@@ -141,11 +144,11 @@ cd test && dpm test
 Use a local Canton participant (with or without a sync domain).
 
 1. **Get Canton**  
-   With DPM (SDK 3.4), start a local Canton sandbox (see **Quick deploy with DPM** above):
+   With DPM, start a local Canton sandbox (see **Quick deploy with DPM** above):
    ```bash
    dpm sandbox
    ```
-   Or download Canton Open Source from [releases](https://github.com/digital-asset/daml/releases) and use a 3.4.x-compatible release.
+   Or download Canton Open Source from [releases](https://github.com/digital-asset/daml/releases) and use a 3.6.x release (the one the SDK targets).
 
 2. **Start a participant**  
    If using a Canton release directory:
@@ -211,13 +214,13 @@ You need to upload **one DAR** (TruthOracle is a single project). If you later a
 3. Upload the DAR (adjust path to your built DAR):
 
    ```bash
-   participant1.dars.upload("/full/path/to/truthoracle-contracts/daml/.daml/dist/truthoracle-v16-1.0.0.dar")
+   participant1.dars.upload("/full/path/to/truthoracle-contracts/daml/.daml/dist/truthoracle-v17-1.0.0.dar")
    ```
 
    Or copy the DAR into the Canton bundle and use a relative path, e.g.:
 
    ```bash
-   participant1.dars.upload("dars/truthoracle-v16-1.0.0.dar")
+   participant1.dars.upload("dars/truthoracle-v17-1.0.0.dar")
    ```
 
 4. Note the returned **hash**; the DAR is uploaded and (by default) **vetted**, so contracts from this package can be used immediately.
@@ -243,14 +246,14 @@ You can also upload the DAR using the Ledger API **PackageService** (e.g. from a
   participant1.parties.allocate("admin", "Admin Party")
   participant1.parties.allocate("marketCreator", "Market Creator")
   ```
-- **Configure the frontend / backend** to use this participant’s **Ledger API** (host, port, TLS, JWT if enabled) and the correct party IDs. Your `blockend/cantonService.js` and frontend Canton client should point to this participant.
+- **Configure the frontend / backend** to use this participant’s **Ledger API** (host, port, TLS, JWT if enabled), the correct party IDs, and the collateral instrument (`COLLATERAL_INSTRUMENT_ADMIN` / `COLLATERAL_INSTRUMENT_ID`) markets are created in.
 
 ---
 
 ## Step 5: Verify
 
 - In the Canton console, create or query a contract from a TruthOracle template (e.g. `PredictionMarket`) to confirm the package is active.
-- Use the TruthOracle frontend: connect the Canton wallet to the same participant and run a flow (e.g. view markets, Canton Coin balance/transfer) to confirm end-to-end.
+- Use the TruthOracle frontend: connect the Cantor8 wallet to the same participant and run a flow (view markets, deposit the collateral instrument, trade) to confirm end-to-end.
 
 ---
 
@@ -258,9 +261,9 @@ You can also upload the DAR using the Ledger API **PackageService** (e.g. from a
 
 | Step | Action |
 |------|--------|
-| 1 | `cd daml && dpm build --all` → get `daml/.daml/dist/truthoracle-v16-1.0.0.dar` |
+| 1 | `cd daml && dpm build --all` → get `daml/.daml/dist/truthoracle-v17-1.0.0.dar` |
 | 2 | Start Canton participant (local or TestNet) and connect to a sync domain |
-| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v16-1.0.0.dar")` |
+| 3 | In Canton console: `participant1.dars.upload("path/to/truthoracle-v17-1.0.0.dar")` |
 | 4 | Allocate parties; point app and frontend to participant Ledger API |
 | 5 | Test with console and/or UI |
 
@@ -289,32 +292,59 @@ Then in the console use your participant’s name (e.g. `participant1`) instead 
 
 ---
 
-## Deploying truthoracle-v16 1.0.0 (from scratch)
+## Deploying truthoracle-v17 1.0.0 (from scratch)
 
-v16 is a new package lineage, not an upgrade: `PredictionMarket` and `MarketCounter.CreateMarket`
-lost `imageUrl` / `description` / `category` (presentation now lives in the backend catalog) and
-keep the mandatory identity `ticker`, `eventTicker`, `yesSubTitle`, `noSubTitle`. Removing fields
-is exactly what the SCU check refuses under an existing name. The v15 and v14 contracts on DevNet
-are abandoned (as v13's were); nothing is migrated. Every market is created anew.
+v17 is a new package lineage, not an upgrade. What changed and why (design:
+`truthoracle-backend/docs/TOKENS.md` §3):
 
-1. `npm run dars:build` (SDK 3.5.12; Apple silicon: Rosetta 2 once, see the README note) →
-   `daml/.daml/dist/truthoracle-v16-1.0.0.dar`, package id
-   `95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1`. The DAR carries no daml-script
+- **Configurable collateral.** `PredictionMarket.collateral : InstrumentId` and the matching
+  `CreateMarket` argument name the CIP-56 instrument the market is denominated in (`{ admin, id }`,
+  the token-standard shape). v16 priced everything in an implicit Canton Coin; the launch currency
+  is cBYN, and switching later must be an environment change plus new markets, never a package.
+- **One `UserWallet` per (owner, instrument)**, `instrument` immutable. `debitUserWallet` /
+  `creditUserWallet` and `PendingPayout.SettleToWallet` / `CancelPayout` assert the wallet holds the
+  instrument the money is in, so a TRO balance can never leak into a cBYN market or vice versa.
+- **`creditRefs` + `Grant`.** `depositRefs` became `creditRefs`, one ref namespace for deposits
+  and grants; `Grant { amount, ref, reason }` credits treasury-funded rewards and bonuses without
+  touching `deposited`, which keeps deposit reconciliation against the ledger index exact.
+- **`auditObservers` on `UserWallet` and `PendingPayout`** (already on markets, positions and
+  forecasts): the regulator sees balances and money owed. `PendingPayout.instrument` says what a
+  payout is owed in — a withdrawal in the wallet's instrument, bonds and prizes in the collateral.
+- **The `CC` suffix is gone**: `balance`, `deposited`, `withdrawn`, `amount`, `minProceeds`,
+  `valueIncrease`, `maxCost`, `costBasis`, `deposited` (LP), `bond`, `accumulatedFees`, `prizePool`,
+  `totalVolume`, `initialValue`. Every amount is read next to its instrument.
+- **`Incentives.daml` deleted.** Rewards are computed off-ledger and credited with `Grant`.
+
+Changing field names and adding mandatory fields is exactly what the SCU check refuses under an
+existing name. The v16 contracts on DevNet are abandoned (as v15's and v14's were); nothing is
+migrated. Every market and every wallet is created anew.
+
+1. `npm run dars:build` (SDK 3.6.0; Apple silicon: Rosetta 2 once, see the README note) →
+   `daml/.daml/dist/truthoracle-v17-1.0.0.dar`, package id
+   `5b52a2ca8ed402b716d7e37ffafb3432b4c773472702822ce9059d899266d66c`. The DAR carries no daml-script
    and no test code (the suite is the separate `daml/test` package).
-2. `npm run dars:test` — 15 scenarios pass, including `catalogIdentityOnMarkets` (two legs of one
-   event, identity survives a trade, blank ticker / event refused).
-3. `npm run dars:upload -- daml/.daml/dist/truthoracle-v16-1.0.0.dar [-- --network devnet]` and
-   confirm the package id above in the DAR's MANIFEST.
-4. In `.env`: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v16`,
-   `VITE_TRUTHORACLE_PACKAGE_ID=95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1`, then
-   `npm run create:contract` to bootstrap the v16 `MarketCounter` as the admin party (the v15 and v14
-   counter belongs to the old package and is left alone).
-5. Backend: `TRUTHORACLE_PACKAGE_NAME=truthoracle-v16` and
-   `TRUTHORACLE_PACKAGE_ID=95c98fad28c10a2539e842afc93ec74e4e1e71df43fd52fe2a0459c7eddaecd1`; start it against a fresh
-   database (or resync the index — the v16 index never contains v14 / v15 rows). `POST /admin/markets`
-   requires `ticker` and `eventTicker` and defaults the sub titles to "Yes" / "No".
-6. Frontend: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v16` and `VITE_TRUTHORACLE_PACKAGE_ID`
-   as above, and redeploy; the admin console's `CreateMarket` form requires the ticker and the
-   event ticker.
-7. User wallets: every account's on-ledger `UserWallet` is created by the backend treasury under
-   the new package on first use, exactly as at the v14 cut-over.
+2. `npm run dars:test` — 21 scenarios pass, including the v17 ones:
+   `walletInstrumentMustMatchCollateral`, `walletInstrumentCheckedOnEveryMove`,
+   `twoInstrumentWalletsCoexist`, `grantIsIdempotent`, `withdrawCarriesInstrument`,
+   `regulatorSeesWalletAndPayout`, `marketPayoutsCarryCollateralAndObservers`.
+3. `npm run dars:upload -- daml/.daml/dist/truthoracle-v17-1.0.0.dar -- --network devnet` (the
+   DevNet participant runs Canton 3.6.1) and confirm the package id above in the DAR's MANIFEST.
+4. In `.env`: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v17`,
+   `VITE_TRUTHORACLE_PACKAGE_ID=5b52a2ca8ed402b716d7e37ffafb3432b4c773472702822ce9059d899266d66c`,
+   `COLLATERAL_INSTRUMENT_ADMIN` / `COLLATERAL_INSTRUMENT_ID` (DevNet stand-in: the DSO party /
+   `Amulet`; cBYN once Cantor8 deploys it) and `AUDIT_OBSERVER_PARTIES` (the regulator's parties —
+   `create:market` puts them on every market it creates, as the backend does on everything it
+   signs), then `npm run create:contract` to bootstrap the v17 `MarketCounter` as the admin party
+   (the v16 counter belongs to the old package and is left alone) and
+   `npm run create:market -- … --initial-value <units>` for the first market.
+5. Backend: `TRUTHORACLE_PACKAGE_NAME=truthoracle-v17`,
+   `TRUTHORACLE_PACKAGE_ID=5b52a2ca8ed402b716d7e37ffafb3432b4c773472702822ce9059d899266d66c`, the
+   `COLLATERAL_INSTRUMENT_*` / `REWARDS_INSTRUMENT_*` block and `AUDIT_OBSERVER_PARTIES`; start it
+   against a fresh database (the v17 index never contains v16 rows). `POST /admin/markets` takes
+   `collateral` (default: the default collateral instrument), `initialValue` and `policy.bond`.
+6. Frontend: `VITE_TRUTHORACLE_PACKAGE_NAME=truthoracle-v17` and `VITE_TRUTHORACLE_PACKAGE_ID`
+   as above, and redeploy; `utils/cantonCommands.ts` builds the v17 argument names (`amount`,
+   `minProceeds`, `valueIncrease`, `maxCost`, `initialValue`, `collateral`).
+7. User wallets: the backend treasury creates an account's on-ledger `UserWallet` for an
+   instrument on first use (deposit, trade or reward in that instrument), with
+   `AUDIT_OBSERVER_PARTIES` as `auditObservers`; a user ends up with one wallet per instrument.

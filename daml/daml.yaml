@@ -2,20 +2,25 @@
 # Prediction market platform for Canton Network testnet
 
 # Keep on the latest stable release (`curl -sS https://get.digitalasset.com/install/latest`); the
-# Cantor8 participants run Canton 3.5.x. Bumping it changes the package id — re-record it in
-# DEPLOYMENT.md. CI (.github/workflows/ci.yml) warns when a newer release exists.
-sdk-version: "3.5.12"
-# Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v15 -> v16):
+# Cantor8 DevNet participant runs Canton 3.6.1. Bumping it changes the package id — re-record it
+# in DEPLOYMENT.md. CI (.github/workflows/ci.yml) warns when a newer release exists.
+sdk-version: "3.6.0"
+# Breaking changes bump the package *NAME* (truthoracle -> v5 -> ... -> v16 -> v17):
 # Canton's smart-contract-upgrade (SCU) check rejects a schema-incompatible DAR
 # uploaded under an existing package name, so a new schema needs a new name.
-# v16: presentation leaves the contract. PredictionMarket and MarketCounter.CreateMarket
-# no longer carry imageUrl / description / category — no choice reads them, no trader
-# signs for them, and they must stay editable — so the backend catalog owns them
-# (truthoracle-backend docs/MARKETS.md "What lives where"). Kept from v15: the catalog
-# identity ticker / eventTicker / yesSubTitle / noSubTitle as mandatory, non-empty Text,
-# and the v14 accounts-era rules (UserWallet created only by the backend treasury,
-# depositRefs a mandatory [Text]). Deployed from scratch: no upgrade path from v15.
-name: truthoracle-v16
+# v17: markets trade in a configurable CIP-56 collateral instrument instead of an
+# implicit Canton Coin. PredictionMarket and MarketCounter.CreateMarket carry
+# `collateral : InstrumentId` ({ admin, id }, the token-standard shape); UserWallet is one
+# contract per (owner, instrument) with an immutable `instrument`, and every market choice
+# that moves money asserts the wallet holds the market's collateral. UserWallet gains
+# `creditRefs` (one ref namespace for deposits and grants) and a `Grant` choice (rewards and
+# bonuses the treasury funds itself, never counted as deposits); UserWallet and PendingPayout
+# gain `auditObservers` so the regulator sees balances and money owed. The `CC` suffix is gone
+# from every field and choice argument (balance, amount, bond, costBasis, totalVolume, ...),
+# and Incentives.daml (the Aptos-era claim-rewards templates) is deleted: rewards are now
+# computed off-ledger and credited with Grant. Deployed from scratch: no upgrade path from
+# v16 (design: truthoracle-backend docs/TOKENS.md).
+name: truthoracle-v17
 version: 1.0.0
 source: daml
 # Templates only. The script suite lives in ./test (its own package, see multi-package.yaml) so the

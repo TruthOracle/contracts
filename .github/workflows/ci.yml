@@ -3,8 +3,9 @@
 # a participant would refuse as an upgrade of what the base branch builds.
 #
 # The Daml SDK version is whatever daml/daml.yaml pins. Policy: keep it on the latest stable
-# release (the Cantor8 participants run Canton 3.5.x); the advisory job below warns when a
-# newer release exists.
+# release (the Cantor8 DevNet participant runs Canton 3.6.1); the advisory job below warns when a
+# newer release exists. Nothing here names the package or its version: both are read from
+# daml/daml.yaml, so a package-name bump (truthoracle-v16 -> v17) needs no workflow change.
 name: ci
 
 on:
@@ -54,7 +55,7 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "SDK: head=$head base=${base:-n/a}"
 
-      - name: JDK 21 (Canton 3.5 tooling — Daml Script runner and upgrade check are JVM)
+      - name: JDK 21 (Canton 3.6 tooling — Daml Script runner and upgrade check are JVM)
         uses: actions/setup-java@v6
         with:
           distribution: temurin
